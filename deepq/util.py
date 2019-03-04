@@ -27,3 +27,7 @@ def double_qlearning(q, actions, rewards, pcontinues, q_next, q_next_selector):
     loss = 0.5 * (td_error ** 2)
     loss = loss.mean()
     return loss
+
+def polyak_update(polyak_factor, target_network, network):
+    for target_param, param in zip(target_network.parameters(), network.parameters()):
+        target_param.data.copy_(polyak_factor*param.data + target_param.data*(1.0 - polyak_factor))
