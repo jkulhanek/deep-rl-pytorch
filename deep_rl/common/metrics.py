@@ -1,4 +1,3 @@
-import tensorflow as tf
 import os
 from abc import abstractclassmethod
 from collections import defaultdict
@@ -154,6 +153,7 @@ class MetricWriter:
                 os.mkdir(logdir)
 
         if use_tensorboard:
+            import tensorflow as tf
             assert logdir is not None and len(logdir) > 0
             self._tensorboard_writer = tf.summary.FileWriter(logdir)
     
@@ -165,6 +165,7 @@ class MetricWriter:
 
     def _flush(self, collection, time, mode):
         if self._use_tensorboard and mode == 'train':
+            import tensorflow as tf
             summary = tf.Summary(value=[tf.Summary.Value(tag=tag,
                                                         simple_value=value) for (tag, value) in collection])
             self._tensorboard_writer.add_summary(summary, time)

@@ -1,12 +1,11 @@
-import deepq.dqn
-from common.train_wrappers import wrap
 import gym
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
 
-from common import register_trainer
+import deep_rl.deepq as deepq
+from deep_rl import register_trainer
 
 class Model(nn.Module):
     def __init__(self):
@@ -30,7 +29,7 @@ class Model(nn.Module):
         return features
 
 @register_trainer(max_time_steps=100000, episode_log_interval=10)
-class Trainer(deepq.dqn.DeepQTrainer):
+class Trainer(deepq.DeepQTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

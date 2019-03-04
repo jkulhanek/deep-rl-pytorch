@@ -1,4 +1,4 @@
-from deepq.util import qlearning, double_qlearning
+from .util import qlearning, double_qlearning
 import unittest
 import torch
 

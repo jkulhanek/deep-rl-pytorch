@@ -1,5 +1,5 @@
-import common.train_wrappers as wrappers
-from common.core import AbstractAgent
+from .common import train_wrappers as wrappers
+from .core import AbstractAgent
 
 _registry = dict()
 _agent_registry = dict()

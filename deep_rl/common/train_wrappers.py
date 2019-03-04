@@ -1,10 +1,11 @@
-from common.train import AbstractTrainerWrapper
 import numpy as np
 import os, math
-from util.metrics import MetricWriter
 from collections import defaultdict, OrderedDict
-from common.util import DefaultOrderedDict
-from common.console_util import print_table
+
+from ..core import AbstractTrainerWrapper
+from .metrics import MetricWriter
+from .util import DefaultOrderedDict
+from .console_util import print_table
 
 class SaveWrapper(AbstractTrainerWrapper):
     def __init__(self, *args, model_root_directory = './checkpoints', saving_period = 10000, **kwargs):

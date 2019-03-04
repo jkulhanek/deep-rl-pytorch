@@ -1,18 +1,18 @@
-from common.train import SingleTrainer, AbstractTrainer
-from common import AbstractAgent
 import numpy as np
 import random
 import os
 from collections import namedtuple
 import abc
 
-from .replay import ReplayBuffer
-from .util import qlearning, polyak_update, double_qlearning
 import torch
 from torch import optim
-from util.pytorch import pytorch_call
-from common.torchsummary import minimal_summary
 
+from ..core import SingleTrainer, AbstractTrainer, AbstractAgent
+from ..common.pytorch import pytorch_call
+from ..common.torchsummary import minimal_summary
+
+from .replay import ReplayBuffer
+from .util import qlearning, polyak_update, double_qlearning
 
 class DeepQTrainer(SingleTrainer):
     def __init__(self, name, env_kwargs, model_kwargs):

@@ -1,4 +1,5 @@
 import torch
+
 def qlearning(q, actions, rewards, pcontinues, q_next_online_net):
     with torch.no_grad():
         target = rewards + pcontinues * torch.max(q_next_online_net, dim = -1)[0]

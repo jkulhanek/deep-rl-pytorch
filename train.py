@@ -1,5 +1,5 @@
 import argparse
-from common import make_trainer
+from deep_rl import make_trainer
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
