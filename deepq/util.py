@@ -15,7 +15,7 @@ def qlearning(q, actions, rewards, pcontinues, q_next_online_net):
 
 def double_qlearning(q, actions, rewards, pcontinues, q_next, q_next_selector):
     with torch.no_grad():
-        indices = torch.argmax(q_next_selector, keepdim = True)
+        indices = torch.argmax(q_next_selector, dim = -1, keepdim = True)
         target = rewards + pcontinues * torch.gather(q_next, -1, indices).squeeze(-1)
 
     actions = actions.long()
