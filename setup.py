@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(
-    name='DeepReinforcementLearning',
+    name='deep_rl',
     version='0.1.0',
     packages=['deep_rl',],
     author='Jonáš Kulhánek',
@@ -9,7 +9,7 @@ setup(
     license='MIT License',
     long_description=open('README.md').read(),
     install_requires = [
-        'git+https://github.com/openai/baselines.git',
+        'baselines @ git+https://github.com/openai/baselines.git',
         'gym'
     ]
 )
