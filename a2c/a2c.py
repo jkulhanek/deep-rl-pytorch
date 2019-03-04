@@ -141,14 +141,11 @@ class A2CModel:
                 masks = masks.view(batch_size, 1)
 
                 _, value, states = model(observations, masks, states)
-                return value.squeeze(1).squeeze(-1).detach(), KeepTensor(detach_all(states))
-
-        def save(path):
-            torch.save(get_state_dict(), os.path.join(path, 'weights.pth'))
+                return value.squeeze(1).squeeze(-1).detach(), KeepTensor(detach_all(states))  
 
         self._step = step
         self._value = value
-        self.save = save
+        self._save = lambda path: torch.save(get_state_dict(), os.path.join(path, 'weights.pth'))
         self.main_device = main_device
         return model
 
@@ -169,6 +166,10 @@ class A2CTrainer(SingleTrainer, A2CModel):
         self._tstart = time.time()
         self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(self.num_processes))
         return model
+
+    def save(self, path):
+        super().save(path)
+        self._save(path)
 
     def _finalize(self):
         if self.log_dir is not None:

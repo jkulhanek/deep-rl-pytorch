@@ -32,7 +32,7 @@ class ReplayBuffer(object):
             rewards.append(reward)
             obses_tp1.append(np.array(obs_tp1, copy=False))
             dones.append(done)
-        return np.array(obses_t), np.array(actions), np.array(rewards), np.array(obses_tp1), np.array(dones).astype(np.float32)
+        return np.array(obses_t), np.array(actions), np.array(rewards).astype(np.float32), np.array(obses_tp1), np.array(dones).astype(np.float32)
 
     def sample(self, batch_size):
         idxes = [random.randint(0, len(self._storage) - 1) for _ in range(batch_size)]

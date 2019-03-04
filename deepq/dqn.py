@@ -53,7 +53,7 @@ class DeepQTrainer(SingleTrainer):
         optimizer = optim.Adam(model.parameters(), lr = self.learning_rate)
         update_params = lambda: None
         if self.double_dqn:
-            target_net = self.create_model(self._model_kwargs)
+            target_net = self.create_model(**self._model_kwargs)
             target_net = target_net.to(main_device)
             update_params = lambda: polyak_update(1.0, target_net, model)
 
@@ -73,7 +73,7 @@ class DeepQTrainer(SingleTrainer):
             return loss
 
         @pytorch_call(main_device)
-        def train(*args):            
+        def train(*args):           
             loss = compute_loss(*args)
             optimizer.zero_grad()
             loss.backward()
@@ -120,15 +120,15 @@ class DeepQTrainer(SingleTrainer):
                 q = model(observations)
             return q.squeeze(0).detach()
 
-
-        def save(path):
-            torch.save(get_state_dict(), os.path.join(path, 'weights.pth'))
-
         self._act = act
         self._q = q
-        self.save = save
+        self._save = lambda path: torch.save(get_state_dict(), os.path.join(path, 'weights.pth'))
         self.main_device = main_device
         return model
+
+    def save(self, path):
+        super().save(path)
+        self._save(path)
 
     def _initialize(self, **model_kwargs):
         self._replay = ReplayBuffer(self.replay_size)
@@ -146,7 +146,7 @@ class DeepQTrainer(SingleTrainer):
 
     def step(self, state, mode = 'validation'):
         if random.random() < self.epsilon:
-            return random.randrange(self.model_kwargs.get('action_space_size'))
+            return random.randrange(self.env.action_space.n)
 
         return self.act(state)
 
@@ -157,11 +157,11 @@ class DeepQTrainer(SingleTrainer):
         pass
 
     def act(self, state):
-        return self._act(state[None])[0]
+        return self._act(state[None])
 
     def _optimize(self):
         state, action, reward, next_state, done = self._replay.sample(self.batch_size)
-        td_losses = self._train([state, action, reward, done, next_state])
+        td_losses = self._train(state, action, reward, next_state, done)
         loss = np.mean(np.abs(td_losses))
         if self._global_t % self.update_period == 0:
             self._update_parameters()

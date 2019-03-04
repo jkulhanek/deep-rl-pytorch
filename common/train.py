@@ -16,11 +16,7 @@ class AbstractTrainer:
         pass
 
     def save(self, path):
-        model = self.model           
-        model.save_weights(path + '/%s-weights.h5' % self.name)
-        with open(path + '/%s-model.json' % self.name, 'w+') as f:
-            f.write(model.to_json())
-            f.flush()
+        pass
 
     def create_env(self, env):
         if isinstance(env, dict):
