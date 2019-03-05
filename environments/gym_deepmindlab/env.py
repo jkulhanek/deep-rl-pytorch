@@ -25,7 +25,7 @@ class DeepmindLabEnv(gym.Env):
         reward = self._lab.step(ACTION_LIST[action], num_steps=4)
         terminal = not self._lab.is_running()
         obs = None if terminal else self._lab.observations()[self._colors]
-        return obs, reward, terminal, None
+        return obs, reward, terminal, dict()
 
 
     def reset(self):
