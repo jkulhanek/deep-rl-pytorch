@@ -30,6 +30,11 @@ try:
 except ImportError:
     pass
 
+try:
+    import environments
+except ImportError:
+    pass
+
 
 def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
     env_id = env_id
