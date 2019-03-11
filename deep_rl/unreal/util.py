@@ -52,3 +52,8 @@ def pixel_control_loss(observations, actions, action_values, gamma = 0.9, cell_s
 
     loss = F.mse_loss(pseudo_rewards, q_actions)
     return loss
+
+def reward_prediction_loss(predictions, rewards):
+    with torch.no_grad():
+        target = torch.stack((rewards == 0, rewards > 0, rewards < 0), dim = 2)
+    return F.binary_cross_entropy_with_logits(predictions, target)

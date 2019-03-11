@@ -21,16 +21,20 @@ class DeepmindLabEnv(gym.Env):
         self.action_space = gym.spaces.Discrete(len(ACTION_LIST))
         self.observation_space = gym.spaces.Box(0, 255, (height, width, 3), dtype = np.uint8)
 
+        self._last_observation = None
+
     def step(self, action):
         reward = self._lab.step(ACTION_LIST[action], num_steps=4)
         terminal = not self._lab.is_running()
-        obs = None if terminal else self._lab.observations()[self._colors]
-        return obs, reward, terminal, dict()
+        obs = self._lab.observations()[self._colors]
+        self._last_observation = obs if obs is not None else self._last_observation
+        return self._last_observation, reward, terminal, dict()
 
 
     def reset(self):
         self._lab.reset()        
-        return self._lab.observations()[self._colors]
+        self._last_observation = self._lab.observations()[self._colors]
+        return self._last_observation
 
     def seed(self, seed = None):
         self._lab.reset(seed=seed)

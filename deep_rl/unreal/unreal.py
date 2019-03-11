@@ -65,8 +65,8 @@ class UnrealModel:
         minimal_summary(model, shapes)
 
     def _loss_a2c(self, model, a2c_batch):
-        observations, returns, actions, masks, states = a2c_batch
-        policy_logits, value, _ = model(observations, masks, states)
+        inputs, returns, actions, masks, states = a2c_batch
+        policy_logits, value, _ = model(inputs, masks, states)
 
         dist = torch.distributions.Categorical(logits = policy_logits)
         action_log_probs = dist.log_prob(actions)
