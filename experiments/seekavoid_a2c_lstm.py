@@ -79,7 +79,7 @@ class Trainer(A2CTrainer):
         self.rms_epsilon = 0.1
         self.num_steps = 20
         self.gamma = .99
-        self.data_parallel = False
+        self.data_parallel = True
 
     def create_model(self):
         return UnrealModelBase(self.env.observation_space.shape[0], self.env.action_space.n)
