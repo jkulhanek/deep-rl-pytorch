@@ -198,6 +198,9 @@ class SingleTrainer(AbstractTrainer):
         self._finalize()
         return None
 
+    def stop(self):
+        self._is_stopped = True
+
 class ThreadServerTrainer(AbstractTrainer):
     def __init__(self, name, env_kwargs, model_kwargs, **kwargs):
         super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs, **kwargs)
@@ -211,8 +214,8 @@ class ThreadServerTrainer(AbstractTrainer):
     def _global_t(self):
         return self._shared_global_t.value
     
-    def _child_run(self, id, env_kwargs, model_kwargs):
-        worker = self.create_worker(id, env_kwargs, model_kwargs)
+    def _child_run(self, id):
+        worker = self.create_worker(id)
         def _process(process, *args, **kwargs):
             result = process(*args, **kwargs)
             self._report_queue.put(result)
@@ -223,22 +226,16 @@ class ThreadServerTrainer(AbstractTrainer):
         worker.run(process = partial(_process, process = worker.process))      
 
     def _initialize(self, **model_kwargs):
-        self.workers = [Thread(target=self._child_run,args=(i, self._env_kwargs, self._model_kwargs)) for i in range(self._num_workers)]
-        for t in self.workers:
-            t.start()
+        self.workers = [Thread(target=self._child_run,args=(i,)) for i in range(self._num_workers)]
 
     def stop(self):
         self._shared_is_stopped.value = True
         for t in self.workers:
             t.join()
 
-    def create_env(self, *args, **kwargs):
-        return None
-
     @abstractclassmethod
-    def create_worker(self, id, env_kwargs, model_kwargs):
+    def create_worker(self, id):
         pass
-
 
     def process(self, mode = 'train', **kwargs):
         assert mode == 'train'
@@ -246,9 +243,21 @@ class ThreadServerTrainer(AbstractTrainer):
         return delta_t, epend, stats
 
     def run(self, process, **kwargs):
+        # Initialize
+        self._sub_create_env = self.create_env
+        self.create_env = lambda **env_kwargs: None
         super().run(process, **kwargs)
+        self.create_env = self._sub_create_env
+        del self._sub_create_env
+
+        # Initialize globals
         self._shared_global_t.value = 0
         self._shared_is_stopped.value = False
+
+        # Start created threads
+        for t in self.workers:
+            t.start()
+
         while not self._shared_is_stopped.value:
             tdiff, _, _ = process(mode = 'train', context = dict())
             self._shared_global_t.value += tdiff

@@ -15,9 +15,9 @@ from ..common.env import VecTransposeImage, make_vec_envs
 from ..common import MetricContext
 from ..common.torchsummary import minimal_summary
 
-from .model import TimeDistributedConv
-from .storage import RolloutStorage
-from .core import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
+from ..a2c.model import TimeDistributedConv
+from ..a2c.storage import RolloutStorage
+from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 
 
 class A2CModel:
@@ -42,7 +42,7 @@ class A2CModel:
         return 7e-4
 
     def show_summary(self, model):
-        batch_shape = (self.num_processes, self.num_steps) 
+        batch_shape = (1, self.num_steps) 
         def get_shape_rec(shapes):
             if isinstance(shapes, tuple):
                 return tuple(get_shape_rec(list(shapes)))
@@ -51,7 +51,7 @@ class A2CModel:
             else:
                 return shapes.size()
 
-        shapes = (batch_shape + self.env.observation_space.shape, batch_shape, get_shape_rec(self._initial_states(self.num_processes)))
+        shapes = (batch_shape + self.env.observation_space.shape, batch_shape, get_shape_rec(self._initial_states(1)))
         minimal_summary(model, shapes)
 
     def _build_train(self, model, main_device):
@@ -82,7 +82,7 @@ class A2CModel:
 
         return train
 
-    def _build_graph(self, allow_gpu, **model_kwargs):
+    def _build_graph(self, **model_kwargs):
         model = self.create_model(**model_kwargs)
         if hasattr(model, 'initial_states'):
             self._initial_states = getattr(model, 'initial_states')
@@ -92,22 +92,9 @@ class A2CModel:
         # Show summary
         self.show_summary(model)
 
-        cuda_devices = torch.cuda.device_count()
-        if cuda_devices == 0 or not allow_gpu:
-            print('Using CPU only')
-            main_device = torch.device('cpu')
-            get_state_dict = lambda: model.state_dict()
-        elif cuda_devices > 1:
-            print('Using %s GPUs' % cuda_devices)
-            main_device = torch.device('cuda:0')
-            model = nn.DataParallel(model, output_device=main_device)
-            model = model.to(main_device)
-            get_state_dict = lambda: model.module.state_dict()
-        else:
-            print('Using single GPU')
-            main_device = torch.device('cuda:0')
-            model = model.to(main_device)
-            get_state_dict = lambda: model.state_dict()
+        print('Using CPU only')
+        main_device = torch.device('cpu')
+        get_state_dict = lambda: model.state_dict()
 
         model.train()
 
@@ -149,71 +136,27 @@ class A2CTrainer(SingleTrainer, A2CModel):
         super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
         self.name = name
         self.num_steps = 5
-        self.num_processes = 16
         self.gamma = 0.99
-        self.allow_gpu = True
-
-        self.log_dir = None
-        self.win = None
 
     def _initialize(self, **model_kwargs):
-        model = super()._build_graph(self.allow_gpu, **model_kwargs)
+        model = super()._build_graph(**model_kwargs)
         self._tstart = time.time()
-        self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(self.num_processes))
+        self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(1))
         return model
 
     def save(self, path):
         super().save(path)
         self._save(path)
 
-    def _finalize(self):
-        if self.log_dir is not None:
-            self.log_dir.cleanup()
-
     def create_env(self, env):
-        self.log_dir = tempfile.TemporaryDirectory()
-
-        seed = 1
-        self.validation_env = make_vec_envs(env, seed, 1, self.gamma, self.log_dir.name, None, allow_early_resets = True)
-        if len(self.validation_env.observation_space.shape) == 3:
-            self.validation_env = VecTransposeImage(self.validation_env)
-
-        envs = make_vec_envs(env, seed + 1, self.num_processes,
-                        self.gamma, self.log_dir.name, None, False)
-
-        if len(envs.observation_space.shape) == 3:
-            envs = VecTransposeImage(envs)
-
-        return envs       
+        raise Exception('Not implemented')     
 
     def process(self, context, mode = 'train', **kwargs):
         metric_context = MetricContext()
         if mode == 'train':
             return self._process_train(context, metric_context)
-        elif mode == 'validation':
-            return self._process_validation(metric_context)
         else:
             raise Exception('Mode not supported')
-
-    def _process_validation(self, metric_context):
-        done = False
-        states = self._initial_states(1)
-        ep_reward = 0.0
-        ep_length = 0
-        n_steps = 0
-        observations = self.validation_env.reset()
-        while not done:
-            action, _, _, states = self._step(observations, np.ones((1, 1), dtype = np.float32), states)
-            observations, reward, done, infos = self.validation_env.step(action)
-            done = done[0]
-            info = infos[0]
-
-            if 'episode' in info.keys():
-                ep_length = info['episode']['l']
-                ep_reward = info['episode']['r']
-            n_steps += 1
-
-        return n_steps, (ep_length, ep_reward), metric_context
 
 
     def _sample_experience_batch(self):
@@ -250,47 +193,4 @@ class A2CTrainer(SingleTrainer, A2CModel):
         metric_context.add_scalar('action_loss', action_loss)
         metric_context.add_scalar('entropy', dist_entropy)
         metric_context.add_last_value_scalar('fps', fps)
-        return self.num_steps * self.num_processes, report, metric_context
-
-class A2CAgent(AbstractAgent):
-    def __init__(self, *args, **kwargs):
-        self.__init__(*args, **kwargs)
-
-        self.model = self._initialize()
-        self.states = None
-        
-    @abstractclassmethod
-    def create_model(self):
-        pass
-
-    def _initialize(self):
-        path = os.path.join('./checkpoints', self.name, 'weights.pth')
-        model = self.create_model()
-        model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-
-        def step(observation, states = None):
-            with torch.no_grad:
-                observation = torch.from_numpy(observation)
-                if states is None and hasattr(model, 'initial_states'):
-                    states = getattr(model, 'initial_states')(1)
-                elif states is None:
-                    states = []
-
-                observations = observation.unsqueeze(0).unsqueeze(0)
-                masks = torch.ones([1, 1], dtype = torch.float32)
-                policy_logits, value, states = model(observations, masks, states)
-                dist = torch.distributions.Categorical(logits = policy_logits)
-                action = dist.sample()
-                return action.squeeze().detach().item().numpy(), detach_all(states)
-
-
-        self._step = step
-        return model
-
-
-    def reset_state(self):
-        self.states = None
-
-    def act(state):
-        action, self.states = self._step(state, self.states)
-        return action
+        return self.num_steps, report, metric_context

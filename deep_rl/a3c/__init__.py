@@ -1,2 +1,1 @@
-from .a2c import A2CTrainer, A2CAgent
-from .a2c_dynamic_batch import A2CTrainerDynamicBatch
+from .a3c import A3CTrainer
