@@ -26,8 +26,8 @@ class DeepmindLabEnv(gym.Env):
     def step(self, action):
         reward = self._lab.step(ACTION_LIST[action], num_steps=4)
         terminal = not self._lab.is_running()
-        obs = self._lab.observations()[self._colors]
-        self._last_observation = obs if obs is not None else self._last_observation
+        obs = None if terminal else self._lab.observations()[self._colors]
+        self._last_observation = obs if obs is not None else np.copy(self._last_observation)
         return self._last_observation, reward, terminal, dict()
 
 
