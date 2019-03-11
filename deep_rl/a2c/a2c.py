@@ -19,6 +19,19 @@ from .model import TimeDistributedConv
 from .storage import RolloutStorage
 from .core import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 
+def get_batch_size(inputs):
+    if isinstance(inputs, (list, tuple)):
+        return get_batch_size(inputs[0])
+    return inputs.size()[0]
+
+def expand_time_dimension(inputs):
+    if isinstance(inputs, list):
+        return [expand_time_dimension(x) for x in inputs]
+    elif isinstance(inputs, tuple):
+        return tuple(expand_time_dimension(list(inputs)))
+    else:
+        batch_size = inputs.size()[0]
+        return inputs.view(batch_size, 1, *inputs.size()[1:])
 
 class A2CModel:
     def __init__(self, *args, **kwargs):
@@ -117,8 +130,8 @@ class A2CModel:
         @pytorch_call(main_device)
         def step(observations, masks, states):
             with torch.no_grad():
-                batch_size = observations.size()[0]
-                observations = observations.view(batch_size, 1, *observations.size()[1:])
+                batch_size = get_batch_size(observations)
+                observations = expand_time_dimension(observations)
                 masks = masks.view(batch_size, 1)
 
 
@@ -131,8 +144,8 @@ class A2CModel:
         @pytorch_call(main_device)
         def value(observations, masks, states):
             with torch.no_grad():
-                batch_size = observations.size()[0]
-                observations = observations.view(batch_size, 1, *observations.size()[1:])
+                batch_size = get_batch_size(observations)
+                observations = expand_time_dimension(observations)
                 masks = masks.view(batch_size, 1)
 
                 _, value, states = model(observations, masks, states)
@@ -230,7 +243,7 @@ class A2CTrainer(SingleTrainer, A2CModel):
                     finished_episodes[0].append(info['episode']['l'])
                     finished_episodes[1].append(info['episode']['r'])
             
-            self.rollouts.insert(np.copy(observations), actions, rewards, terminals, values, states)
+            self.rollouts.insert(observations, actions, rewards, terminals, values, states)
 
         last_values, _ = self._value(self.rollouts.observations, self.rollouts.masks, self.rollouts.states)
         batched = self.rollouts.batch(last_values, self.gamma)

@@ -16,7 +16,7 @@ class ExperienceReplay:
         self._non_zero_reward_indices = deque()
 
     @property
-    def is_full(self):
+    def full(self):
         return len(self._frames) >= self.size
 
     def add(self, frame):
@@ -26,7 +26,7 @@ class ExperienceReplay:
             return
 
         frame_index = self._top_frame_index + len(self._frames)
-        was_full = self.is_full
+        was_full = self.full
 
         # append frame
         self._frames.append(frame)
@@ -116,4 +116,4 @@ class BatchedExperienceReplay(ExperienceReplay):
 
 
     def add_batch(self, batch):
-        batches = list(map(lambda *x: np.array_split(x, x.shape[[0]])))
+        batches = list(map(lambda *x: np.array_split(x, x.shape[0]), *batch))

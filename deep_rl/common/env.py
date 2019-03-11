@@ -1,5 +1,5 @@
 import os
-
+import time
 import gym
 import numpy as np
 import torch
@@ -7,7 +7,7 @@ from gym.spaces.box import Box
 from copy import copy
 
 from baselines import bench
-from baselines.common.atari_wrappers import make_atari, wrap_deepmind, ScaledFloatFrame
+from baselines.common.atari_wrappers import make_atari, wrap_deepmind
 from baselines.common.vec_env import VecEnvWrapper
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
@@ -153,7 +153,7 @@ class TransposeImage(TransposeObs):
             dtype=self.observation_space.dtype)
 
     def observation(self, ob):
-        return ob.transpose(self.op[0], self.op[1], self.op[2])
+        return ob if ob is None else np.transpose(ob, axes = self.op)
 
 class VecTransposeImage(VecEnvWrapper):
     def __init__(self, venv, transpose = [2, 0, 1]):
@@ -197,3 +197,46 @@ class VecNormalize(VecNormalize_):
 
     def eval(self):
         self.training = False
+
+
+
+class ScaledFloatFrame(gym.ObservationWrapper):
+    def __init__(self, env):
+        gym.ObservationWrapper.__init__(self, env)
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=env.observation_space.shape, dtype=np.float32)
+
+    def observation(self, observation):
+        # careful! This undoes the memory optimization, use
+        # with smaller replay buffers only.
+        if observation is None:
+            return None
+            
+        return np.array(observation).astype(np.float32) / 255.0
+
+class RewardCollector(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env=env)
+        self.rewards = None
+
+    def reset(self, **kwargs):
+        self.reset_state()
+        return self.env.reset(**kwargs)
+
+    def reset_state(self):
+        self.rewards = []
+
+    def step(self, action):
+        ob, rew, done, info = self.env.step(action)
+        self.update(ob, rew, done, info)
+        return (ob, rew, done, info)
+
+    def update(self, ob, rew, done, info):
+        assert isinstance(info, dict)
+
+        self.rewards.append(rew)       
+        info['reward'] = rew
+        if done:
+            eprew = sum(self.rewards)
+            eplen = len(self.rewards)
+            epinfo = {"r": round(eprew, 6), "l": eplen}
+            info['episode'] = epinfo

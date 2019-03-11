@@ -17,6 +17,9 @@ from ..common.torchsummary import minimal_summary
 from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 from ..a2c.storage import RolloutStorage
 
+from .util import pixel_control_loss
+from .storage import ExperienceReplay, ExperienceReplayFrame
+
 UnrealLoss = namedtuple('UnrealLoss', ['a2c_loss', 'actor_loss', 'value_loss', 'entropy', 'pixel_control_loss'])
 
 class UnrealModel:
@@ -27,6 +30,9 @@ class UnrealModel:
         self.max_gradient_norm = 0.5
         self.rms_alpha = 0.99
         self.rms_epsilon = 1e-5
+
+        self.pc_gamma = 0.9
+        self.pc_weight = 0.1
 
         # Must be initialized in child class
         self.num_processes = None
@@ -77,7 +83,8 @@ class UnrealModel:
         return loss, action_loss.detach(), value_loss.detach(), dist_entropy.detach()
 
     def _loss_pixel_control(self, model, batch):
-        return None
+        predictions = model.pixel_control(batch.observations)
+        return pixel_control_loss(batch.observations, batch.actions, predictions, self.pc_gamma)
 
     def _loss_value_replay(self, model, batch):
         return None
@@ -101,7 +108,7 @@ class UnrealModel:
             # Compute pixel change gradients
             if not pixel_control_batch is None:
                 pixel_control_loss = self._loss_pixel_control(model, pixel_control_batch)
-                pixel_control_loss.backward()
+                (pixel_control_loss * self.pc_weight).backward()
                 pixel_control_loss = pixel_control_loss.item()
             else:
                 pixel_control_loss = None
@@ -194,6 +201,7 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
         self.num_processes = 16
         self.gamma = 0.99
         self.allow_gpu = True
+        self.replay_size = 10000
 
         self.log_dir = None
         self.win = None
@@ -202,6 +210,7 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
         model = super()._build_graph(self.allow_gpu, **model_kwargs)
         self._tstart = time.time()
         self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(self.num_processes))
+        self.replay = ExperienceReplay(self.replay_size)
         return model
 
     def save(self, path):
@@ -229,6 +238,12 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
         return envs       
 
     def process(self, context, mode = 'train', **kwargs):
+        if not self.replay.full:
+            while not self.replay.full:
+                self._sample_experience_batch()
+            print('Experience replay full')
+
+
         metric_context = MetricContext()
         if mode == 'train':
             return self._process_train(context, metric_context)
@@ -272,7 +287,9 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
                     finished_episodes[0].append(info['episode']['l'])
                     finished_episodes[1].append(info['episode']['r'])
             
-            self.rollouts.insert(np.copy(observations), actions, rewards, terminals, values, states)
+            _observations = np.copy(observations)
+            self.rollouts.insert(_observations, actions, rewards, terminals, values, states)
+            self.replay.add(ExperienceReplayFrame(_observations, actions, rewards, terminals))
 
         last_values, _ = self._value(self.rollouts.observations, self.rollouts.masks, self.rollouts.states)
         batched = self.rollouts.batch(last_values, self.gamma)
@@ -283,7 +300,9 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
 
     def _process_train(self, context, metric_context):
         batch, report = self._sample_experience_batch()
-        loss, value_loss, action_loss, dist_entropy = self._train(*batch)
+        pc_batch = self.replay.sample_sequence(self.num_steps + 1)
+
+        loss, value_loss, action_loss, dist_entropy = self._train(batch, pixel_control_batch = pc_batch)
 
         fps = int(self._global_t/ (time.time() - self._tstart))
         metric_context.add_cummulative('updates', 1)
