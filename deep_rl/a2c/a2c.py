@@ -41,6 +41,7 @@ class A2CModel:
         self.max_gradient_norm = 0.5
         self.rms_alpha = 0.99
         self.rms_epsilon = 1e-5
+        self.data_parallel = True
 
         def not_initialized(*args, **kwargs):
             raise Exception('Not initialized')
@@ -110,7 +111,7 @@ class A2CModel:
             print('Using CPU only')
             main_device = torch.device('cpu')
             get_state_dict = lambda: model.state_dict()
-        elif cuda_devices > 1:
+        elif cuda_devices > 1 and self.data_parallel:
             print('Using %s GPUs' % cuda_devices)
             main_device = torch.device('cuda:0')
             model = nn.DataParallel(model, output_device=main_device)
