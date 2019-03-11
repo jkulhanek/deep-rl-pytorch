@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from .core import forward_masked_rnn
+from ..common.pytorch import forward_masked_rnn_transposed
 
 class Flatten(nn.Module):
     def forward(self, x):
@@ -142,11 +142,11 @@ class LSTMConv(TimeDistributedConv):
             batch_first = True)
 
     def initial_states(self, batch_size):
-        return tuple([torch.zeros([self.lstm_layers, batch_size, self.lstm_hidden_size], dtype = torch.float32) for _ in range(2)])
+        return tuple([torch.zeros([batch_size, self.lstm_layers, self.lstm_hidden_size], dtype = torch.float32) for _ in range(2)])
 
     def forward(self, inputs, masks, states):
         main_features = self.main(inputs)
-        main_features, states = forward_masked_rnn(main_features, masks, states, self.rnn.forward)
+        main_features, states = forward_masked_rnn_transposed(main_features, masks, states, self.rnn.forward)
 
         policy_logits = self.policy_logits(main_features)
         critic = self.critic(main_features)
@@ -197,10 +197,10 @@ class LSTMMultiLayerPerceptron(TimeDistributedMultiLayerPerceptron):
             batch_first = True)
 
     def initial_states(self, batch_size):
-        return tuple([torch.zeros([1, batch_size, self.lstm_hidden_size], dtype = torch.float32) for _ in range(2)])
+        return tuple([torch.zeros([batch_size, 1, self.lstm_hidden_size], dtype = torch.float32) for _ in range(2)])
 
     def forward(self, inputs, masks, states):
         features = inputs
-        features, states = forward_masked_rnn(features, masks, states, self.lstm.forward)
+        features, states = forward_masked_rnn_transposed(features, masks, states, self.lstm.forward)
         return super()(features, masks, states)
     

@@ -178,3 +178,30 @@ class AutoBatchSizeOptimizer:
                     raise e
 
         return results
+
+
+
+def switch_time_batch(tensor):
+    if isinstance(tensor, list):
+        return [switch_time_batch(x) for x in tensor]
+    elif isinstance(tensor, tuple):
+        return tuple([switch_time_batch(x) for x in tensor])
+
+    return tensor.permute(1, 0, *range(2, len(tensor.size())))
+
+
+def rnn_call_switch_axes(forward):
+    def call(*args):
+        args = list(args)
+        args[-1] = switch_time_batch(args[-1])
+        results = forward(*args)
+        results[-1] = switch_time_batch(results[-1])
+        return results
+    return call
+
+
+def forward_masked_rnn_transposed(inputs, masks, states, forward_rnn):
+    states = switch_time_batch(states)
+    outputs, states = forward_masked_rnn(inputs, masks, states, forward_rnn)
+    states = switch_time_batch(states)
+    return outputs, states

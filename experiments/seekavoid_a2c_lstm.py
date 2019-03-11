@@ -8,7 +8,7 @@ import torch
 from deep_rl import register_trainer
 from deep_rl.a2c import A2CTrainer
 from deep_rl.a2c.model import TimeDistributed, Flatten, TimeDistributedModel
-from deep_rl.common.pytorch import forward_masked_rnn
+from deep_rl.common.pytorch import forward_masked_rnn_transposed
 from deep_rl.common.env import ScaledFloatFrame, RewardCollector, TransposeImage
 from deep_rl.common.vec_env import SubprocVecEnv, DummyVecEnv
 
@@ -53,13 +53,13 @@ class UnrealModelBase(TimeDistributedModel):
             batch_first = True)
 
     def initial_states(self, batch_size):
-        return tuple([torch.zeros([self.lstm_layers, batch_size, self.lstm_hidden_size], dtype = torch.float32) for _ in range(2)])
+        return tuple([torch.zeros([batch_size, self.lstm_layers, self.lstm_hidden_size], dtype = torch.float32) for _ in range(2)])
 
     def forward(self, inputs, masks, states):
         observations, last_reward_action = inputs
         conv_features = self.conv(observations)
         features = torch.cat((conv_features, last_reward_action,), dim = 2)
-        features, states = forward_masked_rnn(features, masks, states, self.rnn.forward)
+        features, states = forward_masked_rnn_transposed(features, masks, states, self.rnn.forward)
         policy_logits = self.policy_logits(features)
         critic = self.critic(features)
         return [policy_logits, critic, states]

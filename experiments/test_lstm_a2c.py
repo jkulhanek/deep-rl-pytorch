@@ -8,7 +8,7 @@ import torch.nn as nn
 from deep_rl import register_trainer, make_trainer
 from deep_rl.a2c import A2CTrainer as Trainer
 from deep_rl.a2c.model import LSTMMultiLayerPerceptron, TimeDistributed
-from deep_rl.common.pytorch import forward_masked_rnn
+from deep_rl.common.pytorch import forward_masked_rnn_transposed
 from deep_rl.common.env import make_vec_envs
 
 class Model(nn.Module):
@@ -24,10 +24,10 @@ class Model(nn.Module):
         self.critic = TimeDistributed(nn.Linear(16, 1))
 
     def initial_states(self, batch_size):
-        return tuple([torch.zeros([1, batch_size, 16], dtype = torch.float32) for _ in range(2)])
+        return tuple([torch.zeros([batch_size, 1, 16], dtype = torch.float32) for _ in range(2)])
 
     def forward(self, inputs, masks, states):
-        features, states = forward_masked_rnn(inputs, masks, states, self.rnn)
+        features, states = forward_masked_rnn_transposed(inputs, masks, states, self.rnn)
         return self.actor(features), self.critic(features), states
 
 class TestLstm(gym.Env):
