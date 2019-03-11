@@ -2,7 +2,7 @@ import numpy as np
 import os, math
 from collections import defaultdict, OrderedDict
 
-from ..core import AbstractTrainerWrapper
+from ..core import AbstractTrainerWrapper, MetricContext
 from .metrics import MetricWriter
 from .util import DefaultOrderedDict
 from .console_util import print_table
@@ -78,63 +78,6 @@ class EpisodeNumberLimitWrapper(AbstractTrainerWrapper):
 
     def __repr__(self):
         return '<EpisodeNumberLimit(%s) %s>' % (self.max_number_of_episodes, repr(self.trainer))
-
-class MetricContext:
-    def __init__(self):
-        self.accumulatives = defaultdict(list)
-        self.lastvalues = dict()
-        self.cummulatives = defaultdict(lambda: 0)
-        self.window_size = 100
-
-    def add_last_value_scalar(self, name, value):
-        self.lastvalues[name] = value
-
-    def add_scalar(self, name, value):
-        self.accumulatives[name].append(value)
-
-    def add_cummulative(self, name, value):
-        self.cummulatives[name] += value
-
-    def _format_number(self, number):
-        if isinstance(number, int):
-            return str(number)
-
-        return '{:.3f}'.format(number)
-
-    def summary(self, global_t):
-        values = []
-        values.extend((key, value) for key, value in self.lastvalues.items())
-        values.extend((key, np.mean(x[-self.window_size:])) for key, x in self.accumulatives.items())
-        values.extend((key, x) for key, x in self.cummulatives.items())
-        values.sort(key = lambda x: x[0])
-        print_table([('step', global_t)] + values)
-
-    def flush(self, other):
-        for key, val in self.lastvalues.items():
-            other.lastvalues[key] = val
-
-        for key, val in self.cummulatives.items():
-            other.cummulatives[key] += val
-
-        for key, val in self.accumulatives.items():
-            other.accumulatives[key].extend(val)
-
-    def collect(self, writer, global_t, mode = 'train'):
-        if mode == 'train':
-            metrics_row = writer.record(global_t)
-        elif mode == 'validation':
-            metrics_row = writer.record_validation(global_t)
-
-        for (key, val) in self.accumulatives.items():
-            metrics_row = metrics_row.scalar(key, np.mean(val[-self.window_size:]))
-
-        for (key, value) in self.lastvalues.items():
-            metrics_row = metrics_row.scalar(key, value)
-
-        metrics_row = metrics_row.flush()
-        self.lastvalues = dict()
-        return metrics_row
-
 
 class EpisodeLoggerWrapper(AbstractTrainerWrapper):
     def __init__(self, logging_period = 10, validation_episodes = 100, validation_period = None, *args, **kwargs):

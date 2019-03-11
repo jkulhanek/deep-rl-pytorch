@@ -1,8 +1,73 @@
 import random
 import abc
+from abc import abstractclassmethod
 import gym
 import threading
 import os
+from collections import defaultdict
+import numpy as np
+
+from multiprocessing import Queue, Value
+from threading import Thread
+from functools import partial
+
+
+class MetricContext:
+    def __init__(self):
+        self.accumulatives = defaultdict(list)
+        self.lastvalues = dict()
+        self.cummulatives = defaultdict(lambda: 0)
+        self.window_size = 100
+
+    def add_last_value_scalar(self, name, value):
+        self.lastvalues[name] = value
+
+    def add_scalar(self, name, value):
+        self.accumulatives[name].append(value)
+
+    def add_cummulative(self, name, value):
+        self.cummulatives[name] += value
+
+    def _format_number(self, number):
+        if isinstance(number, int):
+            return str(number)
+
+        return '{:.3f}'.format(number)
+
+    def summary(self, global_t):
+        from .common.console_util import print_table
+        values = []
+        values.extend((key, value) for key, value in self.lastvalues.items())
+        values.extend((key, np.mean(x[-self.window_size:])) for key, x in self.accumulatives.items())
+        values.extend((key, x) for key, x in self.cummulatives.items())
+        values.sort(key = lambda x: x[0])
+        print_table([('step', global_t)] + values)
+
+    def flush(self, other):
+        for key, val in self.lastvalues.items():
+            other.lastvalues[key] = val
+
+        for key, val in self.cummulatives.items():
+            other.cummulatives[key] += val
+
+        for key, val in self.accumulatives.items():
+            other.accumulatives[key].extend(val)
+
+    def collect(self, writer, global_t, mode = 'train'):
+        if mode == 'train':
+            metrics_row = writer.record(global_t)
+        elif mode == 'validation':
+            metrics_row = writer.record_validation(global_t)
+
+        for (key, val) in self.accumulatives.items():
+            metrics_row = metrics_row.scalar(key, np.mean(val[-self.window_size:]))
+
+        for (key, value) in self.lastvalues.items():
+            metrics_row = metrics_row.scalar(key, value)
+
+        metrics_row = metrics_row.flush()
+        self.lastvalues = dict()
+        return metrics_row
 
 
 class AbstractAgent:
@@ -132,3 +197,62 @@ class SingleTrainer(AbstractTrainer):
 
         self._finalize()
         return None
+
+class ThreadServerTrainer(AbstractTrainer):
+    def __init__(self, name, env_kwargs, model_kwargs, **kwargs):
+        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs, **kwargs)
+        self.name = name
+        self._report_queue = Queue(maxsize = 16)
+        self._shared_global_t = Value('i', 0)
+        self._shared_is_stopped = Value('i', False)
+        self._num_workers = 16
+
+    @property
+    def _global_t(self):
+        return self._shared_global_t.value
+    
+    def _child_run(self, id, env_kwargs, model_kwargs):
+        worker = self.create_worker(id, env_kwargs, model_kwargs)
+        def _process(process, *args, **kwargs):
+            result = process(*args, **kwargs)
+            self._report_queue.put(result)
+            worker._shared_global_t = self._shared_global_t.value
+            worker._shared_is_stopped = self._shared_is_stopped.value
+            return result
+
+        worker.run(process = partial(_process, process = worker.process))      
+
+    def _initialize(self, **model_kwargs):
+        self.workers = [Thread(target=self._child_run,args=(i, self._env_kwargs, self._model_kwargs)) for i in range(self._num_workers)]
+        for t in self.workers:
+            t.start()
+
+    def stop(self):
+        self._shared_is_stopped.value = True
+        for t in self.workers:
+            t.join()
+
+    def create_env(self, *args, **kwargs):
+        return None
+
+    @abstractclassmethod
+    def create_worker(self, id, env_kwargs, model_kwargs):
+        pass
+
+
+    def process(self, mode = 'train', **kwargs):
+        assert mode == 'train'
+        delta_t, epend, stats = self._report_queue.get()
+        return delta_t, epend, stats
+
+    def run(self, process, **kwargs):
+        super().run(process, **kwargs)
+        self._shared_global_t.value = 0
+        self._shared_is_stopped.value = False
+        while not self._shared_is_stopped.value:
+            tdiff, _, _ = process(mode = 'train', context = dict())
+            self._shared_global_t.value += tdiff
+
+        self._finalize()
+        return None
+        
