@@ -1,5 +1,7 @@
 import torch
 import torch.nn.functional as F
+import gym
+import numpy as np
 
 
 def autocrop_observations(observations, cell_size):
@@ -74,3 +76,23 @@ def value_loss(values, rewards, gamma):
     with torch.no_grad():
         cummulative_reward = discounted_commulative_reward(rewards, base_value, gamma)
     return F.mse_loss(values[:, :-1], cummulative_reward)
+
+
+class UnrealEnvBaseWrapper(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.last_action_reward = None
+
+    def reset(self):
+        self.last_action_reward = np.zeros(self.action_space.n + 1, dtype = np.float32)
+        return self.observation(self.env.reset())
+
+    def step(self, action):
+        observation, reward, done, stats = self.env.step(action)
+        self.last_action_reward = np.zeros(self.action_space.n + 1, dtype = np.float32)
+        self.last_action_reward[action] = 1.0
+        self.last_action_reward[-1] = np.clip(reward, -1, 1)
+        return self.observation(observation), reward, done, stats
+
+    def observation(self, observation):
+        return (observation, self.last_action_reward)

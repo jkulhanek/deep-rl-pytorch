@@ -5,6 +5,16 @@ from ..a2c.model import TimeDistributedModel, TimeDistributed, Flatten
 from ..common.pytorch import forward_masked_rnn_transposed
 
 class UnrealModel(TimeDistributedModel):
+    def init_weights(self, module):
+        if type(module) in [nn.GRU, nn.LSTM, nn.RNN]:
+            for name, param in module.named_parameters():
+                if 'weight_ih' in name:
+                    nn.init.xavier_uniform_(param.data)
+                elif 'weight_hh' in name:
+                    nn.init.orthogonal_(param.data)
+                elif 'bias' in name:
+                    param.data.fill_(0)
+
     def __init__(self, num_inputs, num_outputs):
         super().__init__()
         layers = []
@@ -20,11 +30,11 @@ class UnrealModel(TimeDistributedModel):
 
         self.lstm_layers = 1
         self.lstm_hidden_size = 256
-        self.rnn = self.init_nondistributed_layer(
-            nn.LSTM(256 + num_outputs + 1, # Conv outputs + last action, reward
-                hidden_size = self.lstm_hidden_size, 
-                num_layers = self.lstm_layers,
-                batch_first = True))[0]
+        self.rnn = nn.LSTM(256 + num_outputs + 1, # Conv outputs + last action, reward
+            hidden_size = self.lstm_hidden_size, 
+            num_layers = self.lstm_layers,
+            batch_first = True)
+        self.rnn.apply(self.init_weights)
 
         self._create_pixel_control_network(num_outputs)
         self._create_rp_network()
@@ -50,7 +60,7 @@ class UnrealModel(TimeDistributedModel):
         self.pc_value = self.init_layer(nn.ConvTranspose2d(32, num_outputs, kernel_size = 4, stride=2), activation=None)[0] # TODO: try ReLU as in original research
 
     def _create_rp_network(self):
-        self.rp = self.init_nondistributed_layer(nn.Linear(9 ** 2 * 32 * 3, 3), activation=None, gain=nn.init.calculate_gain('softmax'))[0]
+        self.rp = self.init_nondistributed_layer(nn.Linear(9 ** 2 * 32 * 3, 3), activation=None)[0]
 
     def reward_prediction(self, inputs):
         observations, _ = inputs

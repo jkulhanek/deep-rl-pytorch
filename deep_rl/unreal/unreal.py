@@ -4,6 +4,7 @@ import tempfile
 import numpy as np
 import os
 import time
+import gym
 
 import torch
 import torch.nn as nn
@@ -11,13 +12,14 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from ..core import AbstractTrainer, SingleTrainer, AbstractAgent
-from ..common.env import VecTransposeImage, make_vec_envs
+from ..common.env import RewardCollector, TransposeImage, ScaledFloatFrame
+from ..common.vec_env import DummyVecEnv, SubprocVecEnv
 from ..common import MetricContext
 from ..common.torchsummary import minimal_summary
 from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 from ..a2c.storage import RolloutStorage
 
-from .util import pixel_control_loss, value_loss, reward_prediction_loss
+from .util import pixel_control_loss, value_loss, reward_prediction_loss, UnrealEnvBaseWrapper
 from .storage import ExperienceReplay
 from .model import UnrealModel
 
@@ -242,20 +244,17 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         return UnrealModel(self.env.observation_space.shape[0], self.env.action_space.n)
 
     def create_env(self, env):
-        self.log_dir = tempfile.TemporaryDirectory()
-
-        seed = 1
-        self.validation_env = make_vec_envs(env, seed, 1, self.gamma, self.log_dir.name, None, allow_early_resets = True)
-        if len(self.validation_env.observation_space.shape) == 3:
-            self.validation_env = VecTransposeImage(self.validation_env)
-
-        envs = make_vec_envs(env, seed + 1, self.num_processes,
-                        self.gamma, self.log_dir.name, None, False)
-
-        if len(envs.observation_space.shape) == 3:
-            envs = VecTransposeImage(envs)
-
-        return envs       
+        def thunk(env):
+            env = gym.make(**env)
+            env = RewardCollector(env)
+            env = TransposeImage(env)
+            env = ScaledFloatFrame(env)
+            env = UnrealEnvBaseWrapper(env)
+            return env
+        
+        self.validation_env = DummyVecEnv([lambda: thunk(env)])
+        env = SubprocVecEnv([lambda: thunk(env) for _ in range(self.num_processes)])
+        return env    
 
     def process(self, context, mode = 'train', **kwargs):
         if not self.replay.full:

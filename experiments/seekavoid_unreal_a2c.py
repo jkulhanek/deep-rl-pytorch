@@ -20,6 +20,6 @@ class Trainer(UnrealTrainer):
 
 def default_args():
     return dict(
-        env_kwargs = 'DeepmindLabSeekavoidArena01-v0',
+        env_kwargs = dict(id = 'DeepmindLabSeekavoidArena01-v0'),
         model_kwargs = dict()
     )
