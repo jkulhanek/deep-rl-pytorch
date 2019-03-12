@@ -18,6 +18,7 @@ from ..common import MetricContext
 from ..common.torchsummary import minimal_summary
 from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 from ..a2c.storage import RolloutStorage
+from ..a2c.a2c import get_batch_size, expand_time_dimension
 
 from .util import pixel_control_loss, value_loss, reward_prediction_loss, UnrealEnvBaseWrapper
 from .storage import ExperienceReplay
@@ -184,8 +185,8 @@ class UnrealModelBase:
         @pytorch_call(main_device)
         def step(observations, masks, states):
             with torch.no_grad():
-                batch_size = observations.size()[0]
-                observations = observations.view(batch_size, 1, *observations.size()[1:])
+                batch_size = get_batch_size(observations)
+                observations = expand_time_dimension(observations)
                 masks = masks.view(batch_size, 1)
 
 
@@ -198,8 +199,8 @@ class UnrealModelBase:
         @pytorch_call(main_device)
         def value(observations, masks, states):
             with torch.no_grad():
-                batch_size = observations.size()[0]
-                observations = observations.view(batch_size, 1, *observations.size()[1:])
+                batch_size = get_batch_size(observations)
+                observations = expand_time_dimension(observations)
                 masks = masks.view(batch_size, 1)
 
                 _, value, states = model(observations, masks, states)
