@@ -20,6 +20,17 @@ def split_batched_items(items, axis = 0):
         return list(map(tuple, zip(*[split_batched_items(x) for x in items])))
     else:
         raise Exception('Type not supported')
+
+def merge_batches(*batches, **kwargs):
+    axis = kwargs.get('axis', 0)
+    if isinstance(batches[0], np.ndarray):
+        return np.concatenate(batches, axis)
+
+    elif isinstance(batches[0], tuple):
+        return tuple([merge_batches(*[x[i] for x in batches], axis = axis) for i in range(len(batches[0]))])
+    
+    elif isinstance(batches[0], list):
+        return [merge_batches(*[x[i] for x in batches], axis = axis) for i in range(len(batches[0]))]
         
 class NewSelectionException(Exception):
     pass
@@ -35,7 +46,7 @@ class SequenceSampler:
     def sequence_length(self):
         return self._sequence_length
 
-    def sample(self, getter, index):
+    def sample(self, getter, index, size):
         batch = []
         for i in range(index - self.sequence_length + 1, index + 1):
             batch.append(getter(i))
@@ -55,8 +66,8 @@ class PlusOneSampler(SequenceSampler):
     def __init__(self, sequence_length):
         super().__init__(sequence_length)
 
-    def sample(self, getter, index):
-        if getter(-1) == getter(index):
+    def sample(self, getter, index, size):
+        if index == size - 1:
             # Cannot allow the last index to be selected
             raise NewSelectionException()
 
@@ -140,12 +151,16 @@ class SequenceStorage:
             try:
                 sampler_obj = self.samplers[sampler]
                 index = np.random.choice(np.where(self.selector_data[:, sampler])[0])
-                result = sampler_obj.sample(lambda i: self[i], (index - self.tail) % self.size)
+                result = sampler_obj.sample(lambda i: self[i], (index - self.tail) % self.size, len(self.storage))
                 trials -= 1
             except NewSelectionException:
                 pass
 
         return result
+
+    @property
+    def full(self):
+        return len(self.storage) == self.size
             
 
 class BatchSequenceStorage:

@@ -1,121 +1,18 @@
 from queue import deque
 import numpy as np
 from collections import namedtuple
+from ..common.storage import SequenceStorage, BatchSequenceStorage, PlusOneSampler, LambdaSampler, batch_items, merge_batches
 
-ExperienceReplayFrame = namedtuple('ExperienceReplayFrame', ['observation','action','reward','terminal'])
+def default_samplers(sequence_length):
+    return [
+        PlusOneSampler(sequence_length),
+        LambdaSampler(4, lambda _, get: get(-1)[2] == 0.0),
+        LambdaSampler(4, lambda _, get: get(-1)[2] != 0.0)
+    ]
 
-class ExperienceReplay:
-    def __init__(self, size):
-        self.size = size
-        self._frames = deque(maxlen = self.size)
-        self._top_frame_index = 0
-
-        # frame indices for zero rewards
-        self._zero_reward_indices = deque()
-        # frame indices for non zero rewards
-        self._non_zero_reward_indices = deque()
-
-    @property
-    def full(self):
-        return len(self._frames) >= self.size
-
-    def add(self, frame):
-        if frame.terminal and len(self._frames) > 0 and self._frames[-1].terminal:
-            # Discard if terminal frame continues
-            print("Terminal frames continued.")
-            return
-
-        frame_index = self._top_frame_index + len(self._frames)
-        was_full = self.full
-
-        # append frame
-        self._frames.append(frame)
-
-        # append index
-        if frame_index >= 3:
-            if frame.reward == 0:
-                self._zero_reward_indices.append(frame_index)
-            else:
-                self._non_zero_reward_indices.append(frame_index)
-    
-        if was_full:
-            self._top_frame_index += 1
-
-            cut_frame_index = self._top_frame_index + 3
-
-            # Cut frame if its index is lower than cut_frame_index.
-            if len(self._zero_reward_indices) > 0 and \
-                self._zero_reward_indices[0] < cut_frame_index:
-                self._zero_reward_indices.popleft()
-                
-            if len(self._non_zero_reward_indices) > 0 and \
-                self._non_zero_reward_indices[0] < cut_frame_index:
-                self._non_zero_reward_indices.popleft()
-
-    def sample_sequence(self, sequence_size):
-        # -1 for the case if start pos is the terminated frame.
-        # (Then +1 not to start from terminated frame.)
-        start_pos = np.random.randint(0, self.size - sequence_size -1)
-        sampled_frames = []
-    
-        while len(sampled_frames) < sequence_size:
-            sampled_frames = []
-            if self._frames[start_pos].terminal:
-                start_pos += 1
-                # Assuming that there are no successive terminal frames.
-
-            for _ in range(sequence_size):
-                start_pos += 1
-                frame = self._frames[start_pos]
-                sampled_frames.append(frame)
-                if frame.terminal:
-                    break
-
-        return sampled_frames
-
-  
-    def sample_rp_sequence(self):
-        """
-        Sample 4 successive frames for reward prediction.
-        """
-        if np.random.randint(2) == 0:
-            from_zero = True
-        else:
-            from_zero = False
-    
-        if len(self._zero_reward_indices) == 0:
-            # zero rewards container was empty
-            from_zero = False
-        elif len(self._non_zero_reward_indices) == 0:
-            # non zero rewards container was empty
-            from_zero = True
-
-        if from_zero:
-            index = np.random.randint(len(self._zero_reward_indices))
-            end_frame_index = self._zero_reward_indices[index]
-        else:
-            index = np.random.randint(len(self._non_zero_reward_indices))
-            end_frame_index = self._non_zero_reward_indices[index]
-
-        start_frame_index = end_frame_index-3
-        raw_start_frame_index = start_frame_index - self._top_frame_index
-
-        sampled_frames = []
-    
-        for i in range(4):
-            frame = self._frames[raw_start_frame_index+i]
-            sampled_frames.append(frame)
-
-        return sampled_frames
-
-from ..common.storage import SequenceStorage, PlusOneSampler, LambdaSampler
-class ExperienceReplay2(SequenceStorage):
+class ExperienceReplay(SequenceStorage):
     def __init__(self, size, sequence_length):
-        super().__init__(size, samplers = [
-            PlusOneSampler(sequence_length),
-            LambdaSampler(4, lambda _, get: get(-1)[2] == 0.0),
-            LambdaSampler(4, lambda _, get: get(-1)[2] != 0.0)
-        ])
+        super().__init__(size, samplers = default_samplers(sequence_length))
 
     def sample_sequence(self):
         return self.sample(0)
@@ -127,3 +24,17 @@ class ExperienceReplay2(SequenceStorage):
             from_zero = False
 
         return self.sample(1 if from_zero else 2)
+
+class BatchedExperienceReplay(BatchSequenceStorage):
+    def __init__(self, num_processes, size, sequence_length):
+        super().__init__(num_processes, size, samplers = default_samplers(sequence_length))
+
+    def sample_sequence(self):
+        return self.sample(0)
+
+    def sample_rp_sequence(self):
+        fromzeros = np.random.binomial(len(self.storages), 0.3333) # Probability of selecting zero sequence        
+        sampler1_batch = self.sample(1, batch_size = fromzeros)
+        sampler2_batch = self.sample(2, len(self.storages) - fromzeros)
+        return merge_batches(sampler1_batch, sampler2_batch)
+        

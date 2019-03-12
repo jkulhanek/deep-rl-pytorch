@@ -18,26 +18,27 @@ from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, deta
 from ..a2c.storage import RolloutStorage
 
 from .util import pixel_control_loss, value_loss, reward_prediction_loss
-from .storage import ExperienceReplay, ExperienceReplayFrame
+from .storage import ExperienceReplay
+from .model import UnrealModel
 
 UnrealLoss = namedtuple('UnrealLoss', ['a2c_loss', 'actor_loss', 'value_loss', 'entropy', 'pixel_control_loss'])
 
-class UnrealModel:
+class UnrealModelBase:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gamma = 0.99
-        self.entropy_coefficient = 0.01
+        self.entropy_coefficient = 0.001
         self.value_coefficient = 0.5
         self.max_gradient_norm = 0.5
         self.rms_alpha = 0.99
-        self.rms_epsilon = 1e-5
+        self.rms_epsilon = 0.1
 
         # Auxiliary config
         self.pc_gamma = 0.9
-        self.pc_weight = 0.1
+        self.pc_weight = 0.05
 
-        self.vr_weight = 0.1
-        self.rp_weight = 0.1
+        self.vr_weight = 1.0
+        self.rp_weight = 1.0
 
         # Must be initialized in child class
         self.num_processes = None
@@ -88,14 +89,20 @@ class UnrealModel:
         return loss, action_loss.detach(), value_loss.detach(), dist_entropy.detach()
 
     def _loss_pixel_control(self, model, batch):
-        predictions = model.pixel_control(batch.observations)
-        predictions[:, -1].mul_(1.0 - batch.terminals[:, -2])
-        return pixel_control_loss(batch.observations, batch.actions, predictions, self.pc_gamma)
+        observations, actions, rewards, terminals = batch
+        masks = torch.ones(rewards[:, :-1].size(), dtype = torch.float32)
+        initial_states = self._initial_states(masks.size()[0])
+        predictions = model.pixel_control(observations, masks, initial_states)
+        predictions[:, -1].mul_(1.0 - terminals[:, -2])
+        return pixel_control_loss(observations, actions, predictions, self.pc_gamma)
 
     def _loss_value_replay(self, model, batch):
-        predictions = model.value_prediction(batch.observations)
-        predictions[:, -1].mul_(1.0 - batch.terminals[:, -2])
-        return value_loss(predictions, batch.rewards[:, :-1], self.gamma)
+        observations, actions, rewards, terminals = batch
+        masks = torch.ones(rewards[:, :-1].size(), dtype = torch.float32)
+        initial_states = self._initial_states(masks.size()[0])
+        predictions = model.value_prediction(observations, masks, initial_states)
+        predictions[:, -1].mul_(1.0 - terminals[:, -2])
+        return value_loss(predictions, rewards[:, :-1], self.gamma)
 
     def _loss_reward_prediction(self, model, batch):
         predictions = model.reward_prediction(batch.observations)
@@ -202,15 +209,16 @@ class UnrealModel:
         self.main_device = main_device
         return model
 
-class UnrealTrainer(SingleTrainer, UnrealModel):
+class UnrealTrainer(SingleTrainer, UnrealModelBase):
     def __init__(self, name, env_kwargs, model_kwargs, devices = []):
         super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
         self.name = name
-        self.num_steps = 5
-        self.num_processes = 16
+        self.num_steps = 20
+        self.num_processes = 8
         self.gamma = 0.99
         self.allow_gpu = True
-        self.replay_size = 10000
+        self.replay_size = 2000
+        self.max_gradient_norm = 40.0
 
         self.log_dir = None
         self.win = None
@@ -219,7 +227,7 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
         model = super()._build_graph(self.allow_gpu, **model_kwargs)
         self._tstart = time.time()
         self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(self.num_processes))
-        self.replay = ExperienceReplay(self.replay_size)
+        self.replay = ExperienceReplay(self.replay_size, self.num_steps)
         return model
 
     def save(self, path):
@@ -229,6 +237,9 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
     def _finalize(self):
         if self.log_dir is not None:
             self.log_dir.cleanup()
+
+    def create_model(self):
+        return UnrealModel(self.env.observation_space.shape[0], self.env.action_space.n)
 
     def create_env(self, env):
         self.log_dir = tempfile.TemporaryDirectory()
@@ -296,9 +307,8 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
                     finished_episodes[0].append(info['episode']['l'])
                     finished_episodes[1].append(info['episode']['r'])
             
-            _observations = np.copy(observations)
-            self.rollouts.insert(_observations, actions, rewards, terminals, values, states)
-            self.replay.add(ExperienceReplayFrame(_observations, actions, rewards, terminals))
+            self.rollouts.insert(observations, actions, rewards, terminals, values, states)
+            self.replay.insert(observations, actions, rewards, terminals)
 
         last_values, _ = self._value(self.rollouts.observations, self.rollouts.masks, self.rollouts.states)
         batched = self.rollouts.batch(last_values, self.gamma)
@@ -309,11 +319,13 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
 
     def _process_train(self, context, metric_context):
         batch, report = self._sample_experience_batch()
-        pc_batch = self.replay.sample_sequence(self.num_steps + 1) if self.pc_weight > 0.0 else None
-        vr_batch = self.replay.sample_sequence(self.num_steps + 1) if self.vr_weight > 0.0 else None
+
+        # Add auxiliary batches
+        pc_batch = self.replay.sample_sequence() if self.pc_weight > 0.0 else None
+        vr_batch = self.replay.sample_sequence() if self.vr_weight > 0.0 else None
         rp_batch = self.replay.sample_rp_sequence() if self.rp_weight > 0.0 else None
 
-        loss, value_loss, action_loss, dist_entropy = self._train(batch, 
+        loss, value_loss, action_loss, dist_entropy, pc_loss, vr_loss, rp_loss = self._train(batch, 
             pixel_control_batch = pc_batch, 
             value_replay_batch = vr_batch, 
             reward_prediction_batch = rp_batch)
@@ -325,4 +337,11 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
         metric_context.add_scalar('action_loss', action_loss)
         metric_context.add_scalar('entropy', dist_entropy)
         metric_context.add_last_value_scalar('fps', fps)
+        if pc_loss is not None:
+            metric_context.add_scalar('pc_loss', pc_loss)
+        if vr_loss is not None:
+            metric_context.add_scalar('vr_loss', vr_loss)
+        if rp_loss is not None:
+            metric_context.add_scalar('rp_loss', rp_loss)        
+        
         return self.num_steps * self.num_processes, report, metric_context

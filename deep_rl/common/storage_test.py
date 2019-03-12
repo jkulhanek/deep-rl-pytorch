@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from .storage import SequenceStorage as ExperienceReplay, SequenceSampler, BatchSequenceStorage, LambdaSampler, PlusOneSampler
+from .storage import SequenceStorage as ExperienceReplay, SequenceSampler, BatchSequenceStorage, LambdaSampler, PlusOneSampler, merge_batches
 
 class SequenceStorageTest(unittest.TestCase):
     def assertNumpyArrayEqual(self, a1, a2, msg = 'Arrays must be equal'):
@@ -10,6 +10,7 @@ class SequenceStorageTest(unittest.TestCase):
     def testShouldStoreAll(self):
         replay = ExperienceReplay(4, samplers = (SequenceSampler(2),))
         replay.insert(1, 0, 0.0, False)
+        replay.insert(5, 0, 0.0, False)
         replay.insert(2, 0, 0.0, False)
         replay.insert(4, 0, 0.0, False)
         replay.insert(6, 0, 0.0, False)
@@ -23,6 +24,7 @@ class SequenceStorageTest(unittest.TestCase):
     def testNegativeIndex(self):
         replay = ExperienceReplay(4, samplers = (SequenceSampler(2),))
         replay.insert(1, 0, 0.0, False)
+        replay.insert(5, 0, 0.0, False)
         replay.insert(2, 0, 0.0, False)
         replay.insert(4, 0, 0.0, False)
         replay.insert(6, 0, 0.0, False)
@@ -189,6 +191,20 @@ class BatchSequenceStorageTest(unittest.TestCase):
         self.assertEqual(sample[1].shape, (3, 2,))
         self.assertEqual(sample[2].shape, (3, 2,))
         self.assertEqual(sample[3].shape, (3, 2,))
+
+class StorageUtilTest(unittest.TestCase):
+    def testMergeBatches(self):
+        batch1 = (np.ones((2,5)), [np.zeros((2,7)), np.ones((2,))])
+        batch2 = (np.ones((3,5)), [np.zeros((3,7)), np.ones((3,))])
+        merges = merge_batches(batch1, batch2)
+
+        self.assertIsInstance(merges, tuple)
+        self.assertIsInstance(merges[1], list)
+        self.assertIsInstance(merges[0], np.ndarray)
+
+        self.assertTupleEqual(merges[0].shape, (5,5))
+        self.assertTupleEqual(merges[1][0].shape, (5,7)) 
+        self.assertTupleEqual(merges[1][1].shape, (5,)) 
 
 if __name__ == '__main__':
     unittest.main()
