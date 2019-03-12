@@ -12,7 +12,10 @@ class Trainer(A2CTrainer):
         self.num_processes = 32
         self.num_steps = 20
         self.gamma = .99
-        self.learning_rate = 7e-4
+
+    @property
+    def learning_rate(self):
+        return 7e-4
 
     def create_model(self):
         return TimeDistributedConv(self.env.observation_space.shape[0], self.env.action_space.n)
