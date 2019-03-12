@@ -7,7 +7,9 @@ RolloutBatch = namedtuple('RolloutBatch', ['observations', 'returns','actions', 
 KeepTensor = namedtuple('KeepTensor', ['data'])
 
 def to_tensor(value, device):
-    if isinstance(value, RolloutBatch):
+    if value is None:
+        return None
+    elif isinstance(value, RolloutBatch):
         return RolloutBatch(*to_tensor(list(value), device))
 
     elif isinstance(value, list):
@@ -30,7 +32,9 @@ def to_tensor(value, device):
         raise Exception('%s Not supported'% type(value))
 
 def to_numpy(tensor):
-    if isinstance(tensor, KeepTensor):
+    if tensor is None:
+        return None
+    elif isinstance(tensor, KeepTensor):
         return tensor.data
     elif isinstance(tensor, tuple):
         return tuple(to_numpy(list(tensor)))
