@@ -1,5 +1,8 @@
+import torch
+
 from ..a2c.a2c import A2CTrainer
 from ..optim.kfac import KFACOptimizer
+from ..common.pytorch import pytorch_call
 
 class ACKTRTrainer(A2CTrainer):
     def __init__(self, *args, **kwargs):
@@ -28,9 +31,21 @@ class ACKTRTrainer(A2CTrainer):
                 dist_entropy * self.entropy_coefficient   
 
             # Optimize
+            if optimizer.steps % optimizer.Ts == 0:
+                # Sampled fisher, see Martens 2014
+                model.zero_grad()
+                pg_fisher_loss = -action_log_probs.mean()
+                value_noise = torch.randn(value.size(), device = value.device)
+                sample_value = value + value_noise
+                vf_fisher_loss = -(value - sample_value.detach()).pow(2).mean()
+
+                fisher_loss = pg_fisher_loss + vf_fisher_loss
+                optimizer.acc_stats = True
+                fisher_loss.backward(retain_graph=True)
+                optimizer.acc_stats = False
+
             optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), self.max_gradient_norm)
             optimizer.step()
 
             return loss.item(), action_loss.item(), value_loss.item(), dist_entropy.item()
