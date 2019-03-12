@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from .storage import SequenceStorage as ExperienceReplay, SequenceSampler, LambdaSampler, PlusOneSampler
+from .storage import SequenceStorage as ExperienceReplay, SequenceSampler, BatchSequenceStorage, LambdaSampler, PlusOneSampler
 
 class SequenceStorageTest(unittest.TestCase):
     def assertNumpyArrayEqual(self, a1, a2, msg = 'Arrays must be equal'):
@@ -8,7 +8,7 @@ class SequenceStorageTest(unittest.TestCase):
             self.fail(msg=f"{a1} != {a2} : " + msg)
 
     def testShouldStoreAll(self):
-        replay = ExperienceReplay(4, 3, samplers = (SequenceSampler(2),))
+        replay = ExperienceReplay(4, samplers = (SequenceSampler(2),))
         replay.insert(1, 0, 0.0, False)
         replay.insert(2, 0, 0.0, False)
         replay.insert(4, 0, 0.0, False)
@@ -21,7 +21,7 @@ class SequenceStorageTest(unittest.TestCase):
         self.assertEqual(replay[3][0], 7)
 
     def testNegativeIndex(self):
-        replay = ExperienceReplay(4, 3, samplers = (SequenceSampler(2),))
+        replay = ExperienceReplay(4, samplers = (SequenceSampler(2),))
         replay.insert(1, 0, 0.0, False)
         replay.insert(2, 0, 0.0, False)
         replay.insert(4, 0, 0.0, False)
@@ -34,7 +34,7 @@ class SequenceStorageTest(unittest.TestCase):
         self.assertEqual(replay[-1][0], 7)
 
     def testLength(self):
-        replay = ExperienceReplay(4, 3, samplers = (SequenceSampler(2),))
+        replay = ExperienceReplay(4, samplers = (SequenceSampler(2),))
         self.assertEqual(len(replay), 0)
         replay.insert(1, 0, 0.0, False)
         self.assertEqual(len(replay), 1)
@@ -48,7 +48,7 @@ class SequenceStorageTest(unittest.TestCase):
         self.assertEqual(len(replay), 4)
 
     def testSamplerStats(self):
-        replay = ExperienceReplay(4, 3, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
+        replay = ExperienceReplay(4, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
 
         replay.insert(1, 0, 0.0, False)
         replay.insert(2, 0, 0.0, False)
@@ -59,7 +59,7 @@ class SequenceStorageTest(unittest.TestCase):
         self.assertEqual(replay.selector_lengths[0], 2)
 
     def testSamplerStatsRemove(self):
-        replay = ExperienceReplay(4, 3, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
+        replay = ExperienceReplay(4, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
 
         replay.insert(6, 0, 0.0, False)
         self.assertNumpyArrayEqual(replay.selector_data[:, 0], [False, False, False, False])
@@ -78,7 +78,7 @@ class SequenceStorageTest(unittest.TestCase):
         import numpy
         numpy.random.seed(1)
 
-        replay = ExperienceReplay(4, 3, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
+        replay = ExperienceReplay(4, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
 
         replay.insert(6, 0, 0.0, False)
         replay.insert(2, 0, 0.0, True)
@@ -101,7 +101,7 @@ class SequenceStorageTest(unittest.TestCase):
         import numpy
         numpy.random.seed(1)
 
-        replay = ExperienceReplay(4, 3, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
+        replay = ExperienceReplay(4, samplers = (LambdaSampler(2, lambda _, get: get(-1)[0] % 2 == 0),))
 
         replay.insert(6, 0, 0.0, False)
         replay.insert(2, 0, 0.0, False)
@@ -126,7 +126,7 @@ class SequenceStorageTest(unittest.TestCase):
         import numpy
         numpy.random.seed(1)
 
-        replay = ExperienceReplay(4, 3, samplers = (PlusOneSampler(2),))
+        replay = ExperienceReplay(4, samplers = (PlusOneSampler(2),))
 
         replay.insert(6, 0, 0.0, False)
         replay.insert(2, 0, 0.0, True)
@@ -149,7 +149,7 @@ class SequenceStorageTest(unittest.TestCase):
         import numpy
         numpy.random.seed(1)
 
-        replay = ExperienceReplay(4, 3, samplers = (PlusOneSampler(2),))
+        replay = ExperienceReplay(4, samplers = (PlusOneSampler(2),))
 
         replay.insert(6, 0, 0.0, False)
         replay.insert(2, 0, 0.0, True)
@@ -167,6 +167,28 @@ class SequenceStorageTest(unittest.TestCase):
 
         self.assertSetEqual(wasFirst, set([4]))
         self.assertSetEqual(wasSampled, set([7]))
+
+class BatchSequenceStorageTest(unittest.TestCase):
+    def testStore(self):
+        replay = BatchSequenceStorage(2, 4, samplers = [SequenceSampler(2)])
+
+        replay.insert(np.array([1,2]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+        replay.insert(np.array([3,4]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+        replay.insert(np.array([5,6]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+        replay.insert(np.array([7,8]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+
+    def testSampleShape(self):
+        replay = BatchSequenceStorage(2, 4, samplers = [SequenceSampler(2)])
+        replay.insert(np.array([1,2]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+        replay.insert(np.array([3,4]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+        replay.insert(np.array([5,6]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+        replay.insert(np.array([7,8]), np.array([1,1]), np.array([1.0, 1.0]), np.array([False, False]))
+
+        sample = replay.sample(0, batch_size=3)
+        self.assertEqual(sample[0].shape, (3, 2,))
+        self.assertEqual(sample[1].shape, (3, 2,))
+        self.assertEqual(sample[2].shape, (3, 2,))
+        self.assertEqual(sample[3].shape, (3, 2,))
 
 if __name__ == '__main__':
     unittest.main()

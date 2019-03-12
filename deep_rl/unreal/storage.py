@@ -108,12 +108,22 @@ class ExperienceReplay:
 
         return sampled_frames
 
+from ..common.storage import SequenceStorage, PlusOneSampler, LambdaSampler
+class ExperienceReplay2(SequenceStorage):
+    def __init__(self, size, sequence_length):
+        super().__init__(size, samplers = [
+            PlusOneSampler(sequence_length),
+            LambdaSampler(4, lambda _, get: get(-1)[2] == 0.0),
+            LambdaSampler(4, lambda _, get: get(-1)[2] != 0.0)
+        ])
 
-class BatchedExperienceReplay(ExperienceReplay):
-    def __init__(self, size, batch_size):
-        super().__init__(size)
-        self.batch_size = batch_size
+    def sample_sequence(self):
+        return self.sample(0)
 
+    def sample_rp_sequence(self):
+        if np.random.randint(2) == 0:
+            from_zero = True
+        else:
+            from_zero = False
 
-    def add_batch(self, batch):
-        batches = list(map(lambda *x: np.array_split(x, x.shape[0]), *batch))
+        return self.sample(1 if from_zero else 2)

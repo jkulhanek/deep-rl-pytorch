@@ -10,6 +10,16 @@ def batch_items(items):
 
     else:
         return np.stack(items)
+
+def split_batched_items(items, axis = 0):
+    if isinstance(items, np.ndarray):
+        return [np.squeeze(x, 0) for x in np.split(items, items.shape[axis], axis)]
+    elif isinstance(items, list):
+        return list(map(list, zip(*[split_batched_items(x) for x in items])))
+    elif isinstance(items, tuple):
+        return list(map(tuple, zip(*[split_batched_items(x) for x in items])))
+    else:
+        raise Exception('Type not supported')
         
 class NewSelectionException(Exception):
     pass
@@ -64,7 +74,7 @@ class SequenceStorage:
     def __len__(self):
         return len(self.storage)
 
-    def __init__(self, size, sequence_length, samplers = []):
+    def __init__(self, size, samplers = []):
         self.samplers = samplers
 
         self.size = size
@@ -137,3 +147,28 @@ class SequenceStorage:
 
         return result
             
+
+class BatchSequenceStorage:
+    def __init__(self, num_storages, single_size, samplers = []):
+        self.storages = [SequenceStorage(single_size, samplers=samplers) for _ in range(num_storages)]
+
+    def insert(self, observations, actions, rewards, terminals):
+        batch = (observations, actions, rewards, terminals)
+        rows = split_batched_items(batch, axis = 0)
+        for storage, row in zip(self.storages, rows):
+            storage.insert(*row)
+
+    def sample(self, sampler, batch_size = None):
+        if batch_size is None:
+            batch_size = len(self.storages)
+
+        probs = np.array([x.selector_lengths[sampler] for x in self.storages], dtype = np.float32)
+        probs = probs / np.sum(probs)
+        selected_sources = np.random.choice(np.arange(len(self.storages)), size=(batch_size,), p = probs)
+
+        sequences = []
+        for source in selected_sources:
+            sequences.append(self.storages[source].sample(sampler))
+
+        return batch_items(sequences)
+        

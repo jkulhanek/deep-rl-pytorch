@@ -57,3 +57,20 @@ def reward_prediction_loss(predictions, rewards):
     with torch.no_grad():
         target = torch.stack((rewards == 0, rewards > 0, rewards < 0), dim = 2)
     return F.binary_cross_entropy_with_logits(predictions, target)
+
+
+def discounted_commulative_reward(rewards, base_value, gamma):
+    cummulative_reward = rewards.copy()
+    max_t = cummulative_reward.size()[1]
+    for i in reversed(range(max_t)):
+        next_values = base_value if i + 1 == max_t else cummulative_reward[:, i + 1]
+        cummulative_reward[:, i] = rewards[:, i] + gamma * next_values
+
+    return cummulative_reward
+
+
+def value_loss(values, rewards, gamma):
+    base_value = values[:, -1]
+    with torch.no_grad():
+        cummulative_reward = discounted_commulative_reward(rewards, base_value, gamma)
+    return F.mse_loss(values[:, :-1], cummulative_reward)

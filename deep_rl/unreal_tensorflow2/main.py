@@ -154,4 +154,4 @@ class A3CTrainer(ThreadServerTrainer):
             def create_env(self, env):
                 return None
 
-        return ThreadTrainer(env_kwargs = env_kwargs, model_kwargs = model_kwargs).compile()
+        return ThreadTrainer(env_kwargs = env_kwargs, model_kwargs = model_kwargs)

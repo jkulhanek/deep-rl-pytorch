@@ -17,7 +17,7 @@ from ..common.torchsummary import minimal_summary
 from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 from ..a2c.storage import RolloutStorage
 
-from .util import pixel_control_loss
+from .util import pixel_control_loss, value_loss, reward_prediction_loss
 from .storage import ExperienceReplay, ExperienceReplayFrame
 
 UnrealLoss = namedtuple('UnrealLoss', ['a2c_loss', 'actor_loss', 'value_loss', 'entropy', 'pixel_control_loss'])
@@ -25,14 +25,19 @@ UnrealLoss = namedtuple('UnrealLoss', ['a2c_loss', 'actor_loss', 'value_loss', '
 class UnrealModel:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.gamma = 0.99
         self.entropy_coefficient = 0.01
         self.value_coefficient = 0.5
         self.max_gradient_norm = 0.5
         self.rms_alpha = 0.99
         self.rms_epsilon = 1e-5
 
+        # Auxiliary config
         self.pc_gamma = 0.9
         self.pc_weight = 0.1
+
+        self.vr_weight = 0.1
+        self.rp_weight = 0.1
 
         # Must be initialized in child class
         self.num_processes = None
@@ -84,13 +89,17 @@ class UnrealModel:
 
     def _loss_pixel_control(self, model, batch):
         predictions = model.pixel_control(batch.observations)
+        predictions[:, -1].mul_(1.0 - batch.terminals[:, -2])
         return pixel_control_loss(batch.observations, batch.actions, predictions, self.pc_gamma)
 
     def _loss_value_replay(self, model, batch):
-        return None
+        predictions = model.value_prediction(batch.observations)
+        predictions[:, -1].mul_(1.0 - batch.terminals[:, -2])
+        return value_loss(predictions, batch.rewards[:, :-1], self.gamma)
 
     def _loss_reward_prediction(self, model, batch):
-        return None
+        predictions = model.reward_prediction(batch.observations)
+        return reward_prediction_loss(predictions, batch.rewards)
 
     def _build_train(self, model, main_device):
         optimizer = optim.RMSprop(model.parameters(), self.learning_rate, eps=self.rms_epsilon, alpha=self.rms_alpha)
@@ -116,7 +125,7 @@ class UnrealModel:
             # Compute value replay gradients
             if not value_replay_batch is None:
                 value_replay_loss = self._loss_value_replay(model, value_replay_batch)
-                value_replay_loss.backward()
+                (value_replay_loss * self.vr_weight).backward()
                 value_replay_loss = value_replay_loss.item()
             else:
                 value_replay_loss = None
@@ -124,7 +133,7 @@ class UnrealModel:
             # Compute reward prediction gradients
             if not reward_prediction_batch is None:
                 reward_prediction_loss = self._loss_reward_prediction(model, reward_prediction_batch)
-                reward_prediction_loss.backward()
+                (reward_prediction_loss * self.rp_weight).backward()
                 reward_prediction_loss = reward_prediction_loss.item()
             else:
                 reward_prediction_loss = None
@@ -300,9 +309,14 @@ class UnrealTrainer(SingleTrainer, UnrealModel):
 
     def _process_train(self, context, metric_context):
         batch, report = self._sample_experience_batch()
-        pc_batch = self.replay.sample_sequence(self.num_steps + 1)
+        pc_batch = self.replay.sample_sequence(self.num_steps + 1) if self.pc_weight > 0.0 else None
+        vr_batch = self.replay.sample_sequence(self.num_steps + 1) if self.vr_weight > 0.0 else None
+        rp_batch = self.replay.sample_rp_sequence() if self.rp_weight > 0.0 else None
 
-        loss, value_loss, action_loss, dist_entropy = self._train(batch, pixel_control_batch = pc_batch)
+        loss, value_loss, action_loss, dist_entropy = self._train(batch, 
+            pixel_control_batch = pc_batch, 
+            value_replay_batch = vr_batch, 
+            reward_prediction_batch = rp_batch)
 
         fps = int(self._global_t/ (time.time() - self._tstart))
         metric_context.add_cummulative('updates', 1)
