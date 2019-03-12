@@ -21,7 +21,7 @@ from ..a2c.storage import RolloutStorage
 from ..a2c.a2c import get_batch_size, expand_time_dimension
 
 from .util import pixel_control_loss, value_loss, reward_prediction_loss, UnrealEnvBaseWrapper
-from .storage import BatchedExperienceReplay
+from .storage import BatchExperienceReplay
 from .model import UnrealModel
 
 UnrealLoss = namedtuple('UnrealLoss', ['a2c_loss', 'actor_loss', 'value_loss', 'entropy', 'pixel_control_loss'])
@@ -230,7 +230,7 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         model = super()._build_graph(self.allow_gpu, **model_kwargs)
         self._tstart = time.time()
         self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(self.num_processes))
-        self.replay = BatchedExperienceReplay(self.num_processes, self.replay_size, self.num_steps)
+        self.replay = BatchExperienceReplay(self.num_processes, self.replay_size, self.num_steps)
         return model
 
     def save(self, path):

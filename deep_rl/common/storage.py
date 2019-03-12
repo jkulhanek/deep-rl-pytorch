@@ -172,6 +172,9 @@ class BatchSequenceStorage:
         rows = split_batched_items(batch, axis = 0)
         for storage, row in zip(self.storages, rows):
             storage.insert(*row)
+    
+    def full(self):
+        return all([x.full for x in self.storages])
 
     def sample(self, sampler, batch_size = None):
         if batch_size is None:

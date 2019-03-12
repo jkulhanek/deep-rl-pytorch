@@ -25,7 +25,7 @@ class ExperienceReplay(SequenceStorage):
 
         return self.sample(1 if from_zero else 2)
 
-class BatchedExperienceReplay(BatchSequenceStorage):
+class BatchExperienceReplay(BatchSequenceStorage):
     def __init__(self, num_processes, size, sequence_length):
         super().__init__(num_processes, size, samplers = default_samplers(sequence_length))
 
