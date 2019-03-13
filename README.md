@@ -1,5 +1,5 @@
 # Deep RL PyTorch
-This repo contains implementation of popular Deep RL algorithms. Furthermore it contains unified interface for training and evaluation. It can be used as a good starting point when implementing new RL algorithm in PyTorch.
+This repo contains implementation of popular Deep RL algorithms. Furthermore it contains unified interface for training and evaluation with unified model saving and visualization. It can be used as a good starting point when implementing new RL algorithm in PyTorch.
 
 ## Getting started
 If you want to base your algorithm on this repository, start by installing it as a package
@@ -12,11 +12,15 @@ If you want to run attached experiments yourself, feel free to clone this reposi
 git clone https://github.com/jkulhanek/deep-rl-pytorch.git
 ```
 
-
+## Concepts
+All algorithms are implemented as base classes. In your experiment your need to subclass from those base classes. The `deep_rl.core.AbstractTrainer` class is used for all trainers and all algorithms inherit this class. Each trainer can be wrapped in several wrappers (classes extending `deep_rl.core.AbstractWrapper`). Those wrappers are used for saving, logging, terminating the experiment and etc. All experiments should be registered using `@deep_rl.register_trainer` decorator. This decorator than wraps the trainer with default wrappers. This can be controlled by passing arguments to the decorator. All registered trainers (experiments) can be run by calling `deep_rl.make_trainer(<<name>>).run()`.
 
 ## Implemented algorithms
 ### A2C
 A2C is a synchronous, deterministic variant of Asynchronous Advantage Actor Critic (A3C) [2] which according to OpenAI [1] gives equal performance. It is however more efficient for GPU utilization.
+
+Start your experiment by subclassing `deep_rl.a2c.A2CTrainer`.
+Several models are included in `deep_rl.a2c.model`. You may want to use at least some helper modules contained in this package when designing your own experiment.
 
 ### Asynchronous Advantage Actor Critic (A3C) [2]
 This implementation uses multiprocessing. It comes with two optimizers - RMSprop and Adam.
