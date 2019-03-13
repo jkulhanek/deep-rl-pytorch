@@ -135,7 +135,6 @@ class A2CModel:
                 observations = expand_time_dimension(observations)
                 masks = masks.view(batch_size, 1)
 
-
                 policy_logits, value, states = model(observations, masks, states)
                 dist = torch.distributions.Categorical(logits = policy_logits)
                 action = dist.sample()
