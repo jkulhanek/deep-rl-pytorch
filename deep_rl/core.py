@@ -11,12 +11,14 @@ from multiprocessing import Queue, Value
 from threading import Thread
 from functools import partial
 
+def _default_cum_value():
+    return 0
 
 class MetricContext:
     def __init__(self):
         self.accumulatives = defaultdict(list)
         self.lastvalues = dict()
-        self.cummulatives = defaultdict(lambda: 0)
+        self.cummulatives = defaultdict(_default_cum_value)
         self.window_size = 100
 
     def add_last_value_scalar(self, name, value):

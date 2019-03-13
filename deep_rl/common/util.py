@@ -1,5 +1,6 @@
 from collections import OrderedDict, Callable
 import os
+from functools import partial
 import contextlib
 
 class DefaultOrderedDict(OrderedDict):
@@ -53,6 +54,9 @@ class CloudpickleWrapper(object):
     def __init__(self, x):
         self.x = x
 
+    def __call__(self, *args, **kwargs):
+        return self.x(*args, **kwargs)
+
     def __getstate__(self):
         import cloudpickle
         return cloudpickle.dumps(self.x)
@@ -61,6 +65,15 @@ class CloudpickleWrapper(object):
         import pickle
         self.x = pickle.loads(ob)
 
+
+def serialize_function(fun, *args, **kwargs):
+    if hasattr(fun, '__self__'):
+        fun = fun.__func__
+        boundfun = lambda ctx: partial(fun, ctx, *args, **kwargs)
+    else:
+        boundfun = lambda _: partial(fun, *args, **kwargs)
+
+    return CloudpickleWrapper(boundfun)
 
 @contextlib.contextmanager
 def clear_mpi_env_vars():

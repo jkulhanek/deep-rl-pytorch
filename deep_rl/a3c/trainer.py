@@ -16,49 +16,149 @@ from ..common import MetricContext
 from ..common.torchsummary import minimal_summary
 
 from ..a2c.model import TimeDistributedConv
-from ..a2c.storage import RolloutStorage
 from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 
+from .storage import RolloutStorage
 
-class A2CModel:
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+def ensure_shared_grads(model, shared_model):
+    for param, shared_param in zip(model.parameters(),
+                                   shared_model.parameters()):
+        if shared_param.grad is not None:
+            return
+        shared_param._grad = param.grad
+
+def expand_time_dimension(inputs):
+    if isinstance(inputs, list):
+        return [expand_time_dimension(x) for x in inputs]
+    elif isinstance(inputs, tuple):
+        return tuple(expand_time_dimension(list(inputs)))
+    else:
+        return inputs.unsqueeze(0)
+
+class A3CWorker:
+    def __init__(self, shared_model, optimizer, create_model_fn):
+        self.shared_model = shared_model
+        self.optimizer = optimizer
+        self.create_model_fn = create_model_fn
+        self.create_env = None
+
+        self._global_t = None
+        self._is_stopped = None
+
         self.entropy_coefficient = 0.01
         self.value_coefficient = 0.5
         self.max_gradient_norm = 0.5
-        self.rms_alpha = 0.99
-        self.rms_epsilon = 1e-5
+        self.num_steps = 5
+        self.gamma = 0.99
 
-        def not_initialized(*args, **kwargs):
-            raise Exception('Not initialized')
-        self._train = self._step = self._value = not_initialized
+    def run(self, process, **kwargs):
+        self._global_t = 0
+        self._is_stopped = False
+        while not self._is_stopped:
+            tdiff, _, _ = process(mode = 'train', context = dict())
+            self._global_t += tdiff
 
-    @abstractclassmethod
-    def create_model(self, **kwargs):
-        pass
+        return None
 
-    @property
-    def learning_rate(self):
-        return 7e-4
 
-    def show_summary(self, model):
-        batch_shape = (1, self.num_steps) 
-        def get_shape_rec(shapes):
-            if isinstance(shapes, tuple):
-                return tuple(get_shape_rec(list(shapes)))
-            elif isinstance(shapes, list):
-                return [get_shape_rec(x) for x in shapes]
-            else:
-                return shapes.size()
+    def initialize(self):
+        self.env = self.create_env()
+        self.model = self.create_model_fn(self)()
+        self._build_graph()
+        self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(1))
 
-        shapes = (batch_shape + self.env.observation_space.shape, batch_shape, get_shape_rec(self._initial_states(1)))
-        minimal_summary(model, shapes)
+    def process(self, context, mode = 'train', **kwargs):
+        metric_context = MetricContext()
+        if mode == 'train':
+            return self._process_train(context, metric_context)
+        else:
+            raise Exception('Mode not supported')
+
+
+    def _sample_experience_batch(self):
+        finished_episodes = ([], [])
+        for _ in range(self.num_steps):
+            states = self.rollouts.states if self.rollouts.mask else self._initial_states(1)
+            action, value, action_log_prob, states = self._step(self.rollouts.observation, states)
+
+            # Take actions in env and look the results
+            observation, reward, terminal, info = self.env.step(action)
+
+            # Collect true rewards
+            if 'episode' in info.keys():
+                finished_episodes[0].append(info['episode']['l'])
+                finished_episodes[1].append(info['episode']['r'])
+
+            if terminal:
+                observation = self.env.reset()
+            
+            self.rollouts.insert(observation, action, reward, terminal, value, states)
+
+            if terminal:
+                # End after episode env
+                # Improves lstm performance
+                break
+
+        states = self.rollouts.states if self.rollouts.mask else self._initial_states(1)
+        last_values, _ = self._value(self.rollouts.observation, states)
+        batched = self.rollouts.batch(last_values, self.gamma)
+
+        # Prepare next batch starting point
+        return batched, (len(finished_episodes[0]),) + finished_episodes
+
+
+    def _process_train(self, context, metric_context):
+        self.model.load_state_dict(self.shared_model.state_dict())
+        batch, report = self._sample_experience_batch()
+        loss, value_loss, action_loss, dist_entropy = self._train(*batch)
+
+        metric_context.add_cummulative('updates', 1)
+        metric_context.add_scalar('loss', loss)
+        metric_context.add_scalar('value_loss', value_loss)
+        metric_context.add_scalar('action_loss', action_loss)
+        metric_context.add_scalar('entropy', dist_entropy)
+        return self.num_steps, report, metric_context
+
+    def _build_graph(self):
+        model = self.model
+        if hasattr(model, 'initial_states'):
+            self._initial_states = getattr(model, 'initial_states')
+        else:
+            self._initial_states = lambda _: []
+
+        main_device = torch.device('cpu')
+        model.train()
+
+        # Build train and act functions
+        self._train = self._build_train(model, main_device)
+
+        @pytorch_call(main_device)
+        def step(observations, states):
+            with torch.no_grad():
+                observations = expand_time_dimension(observations)
+                policy_logits, value, states = model(observations, states)
+                dist = torch.distributions.Categorical(logits = policy_logits)
+                action = dist.sample()
+                action_log_probs = dist.log_prob(action)
+                return action.squeeze(0).item(), value.squeeze(0).squeeze(-1).item(), action_log_probs.squeeze(0).item(), KeepTensor(detach_all(states))
+
+        @pytorch_call(main_device)
+        def value(observations, states):
+            with torch.no_grad():
+                observations = expand_time_dimension(observations)
+                _, value, states = model(observations, states)
+                return value.squeeze(0).squeeze(-1).detach(), KeepTensor(detach_all(states))  
+
+        self._step = step
+        self._value = value
+        self.main_device = main_device
+        return model
 
     def _build_train(self, model, main_device):
-        optimizer = optim.RMSprop(model.parameters(), self.learning_rate, eps=self.rms_epsilon, alpha=self.rms_alpha)
+        optimizer = self.optimizer
         @pytorch_call(main_device)
         def train(observations, returns, actions, masks, states = []):
-            policy_logits, value, _ = model(observations, masks, states)
+            policy_logits, value, _ = model(observations, states)
 
             dist = torch.distributions.Categorical(logits = policy_logits)
             action_log_probs = dist.log_prob(actions)
@@ -76,121 +176,9 @@ class A2CModel:
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.max_gradient_norm)
+            ensure_shared_grads(model, self.shared_model)
             optimizer.step()
 
             return loss.item(), action_loss.item(), value_loss.item(), dist_entropy.item()
 
         return train
-
-    def _build_graph(self, **model_kwargs):
-        model = self.create_model(**model_kwargs)
-        if hasattr(model, 'initial_states'):
-            self._initial_states = getattr(model, 'initial_states')
-        else:
-            self._initial_states = lambda _: []
-
-        # Show summary
-        self.show_summary(model)
-
-        print('Using CPU only')
-        main_device = torch.device('cpu')
-        get_state_dict = lambda: model.state_dict()
-
-        model.train()
-
-        # Build train and act functions
-        self._train = self._build_train(model, main_device)
-
-        @pytorch_call(main_device)
-        def step(observations, masks, states):
-            with torch.no_grad():
-                batch_size = observations.size()[0]
-                observations = observations.view(batch_size, 1, *observations.size()[1:])
-                masks = masks.view(batch_size, 1)
-
-
-                policy_logits, value, states = model(observations, masks, states)
-                dist = torch.distributions.Categorical(logits = policy_logits)
-                action = dist.sample()
-                action_log_probs = dist.log_prob(action)
-                return action.squeeze(1).detach(), value.squeeze(1).squeeze(-1).detach(), action_log_probs.squeeze(1).detach(), KeepTensor(detach_all(states))
-
-        @pytorch_call(main_device)
-        def value(observations, masks, states):
-            with torch.no_grad():
-                batch_size = observations.size()[0]
-                observations = observations.view(batch_size, 1, *observations.size()[1:])
-                masks = masks.view(batch_size, 1)
-
-                _, value, states = model(observations, masks, states)
-                return value.squeeze(1).squeeze(-1).detach(), KeepTensor(detach_all(states))  
-
-        self._step = step
-        self._value = value
-        self._save = lambda path: torch.save(get_state_dict(), os.path.join(path, 'weights.pth'))
-        self.main_device = main_device
-        return model
-
-class A2CTrainer(SingleTrainer, A2CModel):
-    def __init__(self, name, env_kwargs, model_kwargs, devices = []):
-        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
-        self.name = name
-        self.num_steps = 5
-        self.gamma = 0.99
-
-    def _initialize(self, **model_kwargs):
-        model = super()._build_graph(**model_kwargs)
-        self._tstart = time.time()
-        self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(1))
-        return model
-
-    def save(self, path):
-        super().save(path)
-        self._save(path)
-
-    def create_env(self, env):
-        raise Exception('Not implemented')     
-
-    def process(self, context, mode = 'train', **kwargs):
-        metric_context = MetricContext()
-        if mode == 'train':
-            return self._process_train(context, metric_context)
-        else:
-            raise Exception('Mode not supported')
-
-
-    def _sample_experience_batch(self):
-        finished_episodes = ([], [])
-        for _ in range(self.num_steps):
-            actions, values, action_log_prob, states = self._step(self.rollouts.observations, self.rollouts.masks, self.rollouts.states)
-
-            # Take actions in env and look the results
-            observations, rewards, terminals, infos = self.env.step(actions)
-
-            # Collect true rewards
-            for info in infos:
-                if 'episode' in info.keys():
-                    finished_episodes[0].append(info['episode']['l'])
-                    finished_episodes[1].append(info['episode']['r'])
-            
-            self.rollouts.insert(np.copy(observations), actions, rewards, terminals, values, states)
-
-        last_values, _ = self._value(self.rollouts.observations, self.rollouts.masks, self.rollouts.states)
-        batched = self.rollouts.batch(last_values, self.gamma)
-
-        # Prepare next batch starting point
-        return batched, (len(finished_episodes[0]),) + finished_episodes
-
-
-    def _process_train(self, context, metric_context):
-        batch, report = self._sample_experience_batch()
-        loss, value_loss, action_loss, dist_entropy = self._train(*batch)
-
-        fps = int(self._global_t/ (time.time() - self._tstart))
-        metric_context.add_cummulative('updates', 1)
-        metric_context.add_scalar('loss', loss)
-        metric_context.add_scalar('value_loss', value_loss)
-        metric_context.add_scalar('action_loss', action_loss)
-        metric_context.add_scalar('entropy', dist_entropy)
-        metric_context.add_last_value_scalar('fps', fps)
-        return self.num_steps, report, metric_context
