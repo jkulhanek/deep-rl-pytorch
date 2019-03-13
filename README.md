@@ -31,7 +31,7 @@ This is an improvement of A2C described in [1].
 ## Experiments
 > Comming soon
 
-## Prerequisities
+## Requirements
 Those packages must be installed before using the framework for your own algorithm:
 - OpenAI baselines (can be installed by running `pip install git+https://github.com/openai/baselines.git`)
 - PyTorch
