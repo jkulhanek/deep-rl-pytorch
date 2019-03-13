@@ -119,6 +119,31 @@ class VisdomHandler(MetricHandlerBase):
                         metric[0].clear()
                         metric[1].clear()
 
+class DataHandler(MetricHandlerBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__('data', *args, **kwargs)
+        self._metrics = defaultdict(lambda: ([], []))
+        self._was_initialized = False
+
+    def collect(self, collection, time, mode = 'train'):
+        for (tag, val) in collection:
+            if mode != 'train':
+                tag = mode + '_' + tag
+
+            t, v = self._metrics[tag]
+            t.append(time)
+            v.append(val)
+
+    def save(self, path):
+        import csv
+        with open(os.path.join(path, 'metrics.txt'), 'a' if self._was_initialized else 'w+') as f:
+            writer = csv.writer(f)
+            for key, vals in self._metrics.items():
+                writer.writerow([key, str(len(vals[0]))] + vals[0] + vals[1])
+
+            f.flush()
+        self._was_initialized = True
+        self._metrics = defaultdict(lambda: ([], []))
 
 class MetricWriter:
     class _MetricRecordFactory:
@@ -147,6 +172,8 @@ class MetricWriter:
             self.handlers = [VisdomHandler(self.visdom), MatplotlibHandler(interactive=False)]
         else:
             self.handlers = [MatplotlibHandler()]
+
+        self.handlers.append(DataHandler())
 
         if logdir is not None and len(logdir) > 0:
             if not os.path.exists(logdir):
