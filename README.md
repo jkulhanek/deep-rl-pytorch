@@ -22,6 +22,8 @@ A2C is a synchronous, deterministic variant of Asynchronous Advantage Actor Crit
 Start your experiment by subclassing `deep_rl.a2c.A2CTrainer`.
 Several models are included in `deep_rl.a2c.model`. You may want to use at least some helper modules contained in this package when designing your own experiment.
 
+In most of the models, initialization is done according to [3].
+
 ### Asynchronous Advantage Actor Critic (A3C) [2]
 This implementation uses multiprocessing. It comes with two optimizers - RMSprop and Adam.
 
@@ -54,4 +56,6 @@ This repository is based on work of several other authors. We would like to expr
 [1] Wu, Y., Mansimov, E., Grosse, R.B., Liao, S. and Ba, J., 2017. Scalable trust-region method for deep reinforcement learning using kronecker-factored approximation. In Advances in neural information processing systems (pp. 5279-5288).
 
 [2] Mnih, V., Badia, A.P., Mirza, M., Graves, A., Lillicrap, T., Harley, T., Silver, D. and Kavukcuoglu, K., 2016, June. Asynchronous methods for deep reinforcement learning. In International conference on machine learning (pp. 1928-1937).
+
+[3] Saxe, A.M., McClelland, J.L. and Ganguli, S., 2013. Exact solutions to the nonlinear dynamics of learning in deep linear neural networks. arXiv preprint arXiv:1312.6120.
 
