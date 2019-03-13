@@ -12,10 +12,10 @@ import time
 
 from .environment.environment import Environment
 from .model.model import UnrealModel
-from .train.trainer import Trainer
+from .trainer import A3CAgent as Trainer
 from .train.rmsprop_applier import RMSPropApplier
 
-from .core import ThreadServerTrainer
+from ..common.multiprocessing import ThreadServerTrainer
 from deep_rl.core import SingleTrainer
 
 from deep_rl.common.env import ScaledFloatFrame, RewardCollector
@@ -29,9 +29,9 @@ USE_GPU = True  # To use GPU, set True
 # get command line args
 flags = dict(env_type="lab",
              env_name="nav_maze_static_01",
-             use_pixel_change=True,
-             use_value_replay=True,
-             use_reward_prediction=True,
+             use_pixel_change=False,
+             use_value_replay=False,
+             use_reward_prediction=False,
              checkpoint_dir="/tmp/unreal_checkpoints",
              parallel_size=8,
              local_t_max=20,
@@ -66,13 +66,11 @@ initial_learning_rate = log_uniform(flags.initial_alpha_low,
 action_size = Environment.get_action_size(flags.env_type,
                                         flags.env_name)
 
-@register_trainer('unreal-tensorflow2', max_time_steps = 40e6, validation_period = None, validation_episodes = None,  episode_log_interval = 10, saving_period = 500000, save = False)
+@register_trainer('unreal-tensorflow2', max_time_steps = 10 * 10**7, validation_period = None, validation_episodes = None,  episode_log_interval = 10, saving_period = 500000, save = False)
 class A3CTrainer(ThreadServerTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._num_workers = flags.parallel_size
-
-        self.trainers = []
+        self.num_processes = 8
 
     def _initialize(self, **model_kwargs):       
         self.global_network = UnrealModel(action_size,
@@ -85,73 +83,64 @@ class A3CTrainer(ThreadServerTrainer):
                                           device)
         self.trainers = []
 
-        learning_rate_input = tf.placeholder("float")
+        self.learning_rate_input = tf.placeholder("float")
 
-        grad_applier = RMSPropApplier(learning_rate=learning_rate_input,
+        self.grad_applier = RMSPropApplier(learning_rate=self.learning_rate_input,
                                       decay=flags.rmsp_alpha,
                                       momentum=0.0,
                                       epsilon=flags.rmsp_epsilon,
                                       clip_norm=flags.grad_norm_clip,
                                       device=device)
 
-        for i in range(flags.parallel_size):
-            trainer = Trainer(i,
-                              self.global_network,
-                              initial_learning_rate,
-                              learning_rate_input,
-                              grad_applier,
-                              flags.env_type,
-                              flags.env_name,
-                              self._create_env(self._env_kwargs),
-                              flags.use_pixel_change,
-                              flags.use_value_replay,
-                              flags.use_reward_prediction,
-                              flags.pixel_change_lambda,
-                              flags.entropy_beta,
-                              flags.local_t_max,
-                              flags.gamma,
-                              flags.gamma_pc,
-                              flags.experience_history_size,
-                              flags.max_time_step,
-                              device)
-            self.trainers.append(trainer)
-
         # prepare session
         config = tf.ConfigProto(log_device_placement=False,
                                 allow_soft_placement=True)
         config.gpu_options.allow_growth = True
+
         self.sess = tf.Session(config=config)
 
-        self.sess.run(tf.global_variables_initializer())
-
-        # set wall time
-        self.wall_t = 0.0
-        self.start_time = time.time()
-        self.next_save_steps = flags.save_interval_step        
         super()._initialize(**model_kwargs)
 
-    def create_env(self, env):
-        return None
+        self.sess.run(tf.global_variables_initializer())    
+        
 
-    def _create_env(self, env):
+    def create_env(self, env):
         env = gym.make(**env)
         env = RewardCollector(env)
         env = ScaledFloatFrame(env)
         env = UnrealEnvBaseWrapper(env)
         return env
 
-    def create_worker(self, id, env_kwargs, model_kwargs):
-        trainer = self.trainers[id]
+    def create_model(self, thread_id = -1, **model_kwargs):
+        return UnrealModel(action_size,
+            -1,
+            flags.use_pixel_change,
+            flags.use_value_replay,
+            flags.use_reward_prediction,
+            flags.pixel_change_lambda,
+            flags.entropy_beta,
+            device)
 
-        # set start_time
-        trainer.set_start_time(self.start_time)
+    def create_worker(self, id):
+        trainer = Trainer(
+            self.sess,
+            id,
+            self.global_network,
+            initial_learning_rate,
+            self.learning_rate_input,
+            self.grad_applier,
+            flags.env_type,
+            flags.env_name,
+            flags.use_pixel_change,
+            flags.use_value_replay,
+            flags.use_reward_prediction,
+            flags.pixel_change_lambda,
+            flags.entropy_beta,
+            flags.local_t_max,
+            flags.gamma,
+            flags.gamma_pc,
+            flags.experience_history_size,
+            flags.max_time_step,
+            device)
 
-        sess = self.sess
-        class ThreadTrainer(SingleTrainer):
-            def process(self, *args, **kwargs):       
-                return trainer.process(sess, self._global_t)
-
-            def create_env(self, env):
-                return None
-
-        return ThreadTrainer(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
+        return trainer

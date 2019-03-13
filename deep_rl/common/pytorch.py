@@ -19,7 +19,7 @@ def to_tensor(value, device):
         return tuple(to_tensor(list(value), device))
 
     elif isinstance(value, dict):
-        return {key: to_tensor(val) for key, val in value.items()}
+        return {key: to_tensor(val, device) for key, val in value.items()}
 
     elif isinstance(value, np.ndarray):
         if value.dtype == np.bool:

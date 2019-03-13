@@ -42,13 +42,16 @@ class TestLstm(gym.Env):
 
     def reset(self):
         self.time = 0
-        self.chosen = self.random.randrange(self.action_space.n)
+        self.chosen = 1 + self.random.randrange(self.action_space.n - 1)
         return self.observe()
 
     def step(self, action):
         self.time += 1
         if self.time != self.length:
-            return self.observe(), 0.0, False, dict()
+            if action == 0:
+                return self.observe(), 0.0, False, dict()
+            else:
+                return self.observe(), 0.0, True, dict()
         else:
             if action == self.chosen:
                 return self.observe(), 1.0, True, dict()

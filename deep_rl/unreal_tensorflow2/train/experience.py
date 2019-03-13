@@ -6,6 +6,7 @@ from __future__ import print_function
 import random
 import numpy as np
 from collections import deque
+from ...common.storage import batch_items
 
 
 class ExperienceFrame(object):
@@ -104,7 +105,7 @@ class Experience(object):
       if frame.terminal:
         break
     
-    return sampled_frames
+    return batch_items([(x.state, x.action, x.reward, x.terminal) for x in sampled_frames])
 
   
   def sample_rp_sequence(self):
@@ -139,4 +140,4 @@ class Experience(object):
       frame = self._frames[raw_start_frame_index+i]
       sampled_frames.append(frame)
 
-    return sampled_frames
+    return batch_items([(x.state, x.action, x.reward, x.terminal) for x in sampled_frames])

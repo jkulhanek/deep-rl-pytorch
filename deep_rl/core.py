@@ -13,6 +13,16 @@ from functools import partial
 
 def _default_cum_value():
     return 0
+    
+class Schedule:
+    def __init__(self):
+        pass
+
+    def __call__(self):
+        return None
+
+    def step(self, time):
+        self.time = time
 
 class MetricContext:
     def __init__(self):
@@ -105,6 +115,7 @@ class LambdaAgent(AbstractAgent):
 
 class AbstractTrainer:
     def __init__(self, env_kwargs, model_kwargs, **kwargs):
+        self.schedules = dict()
         super().__init__(**kwargs)
         self.env = None
         self._env_kwargs = env_kwargs
@@ -113,7 +124,31 @@ class AbstractTrainer:
         self.name = 'trainer'
 
         self.is_initialized = False
-        pass
+        
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name in self.schedules:
+            self.schedules.pop(name)
+
+        if isinstance(value, Schedule):
+            self.schedules[name] = value
+
+    def __getattribute__(self, name):
+        value = super().__getattribute__(name)
+        if isinstance(value, Schedule):
+            if not hasattr(self, '_global_t'):
+                raise Exception('Schedules are supported only for classes with _global_t property')
+            value.step(getattr(self, '_global_t'))
+            return value()
+        else:
+            return value
+
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if name in self.schedules:
+            self.schedules.pop(name)
+
 
     def save(self, path):
         pass
@@ -155,6 +190,7 @@ class AbstractTrainer:
 
 class AbstractTrainerWrapper(AbstractTrainer):
     def __init__(self, trainer, *args, **kwargs):
+        super().__init__(None, None)
         self.trainer = trainer
         self.unwrapped = trainer.unwrapped if hasattr(trainer, 'unwrapped') else trainer
         self.summary_writer = trainer.summary_writer if hasattr(trainer, 'summary_writer') else None
@@ -190,9 +226,11 @@ class SingleTrainer(AbstractTrainer):
         pass
 
     def run(self, process, **kwargs):
-        super().run(process, **kwargs)
         self._global_t = 0
         self._is_stopped = False
+
+        super().run(process, **kwargs)
+        
         while not self._is_stopped:
             tdiff, _, _ = process(mode = 'train', context = dict())
             self._global_t += tdiff
@@ -266,4 +304,3 @@ class ThreadServerTrainer(AbstractTrainer):
 
         self._finalize()
         return None
-        

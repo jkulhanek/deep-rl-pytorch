@@ -204,7 +204,20 @@ class StorageUtilTest(unittest.TestCase):
 
         self.assertTupleEqual(merges[0].shape, (5,5))
         self.assertTupleEqual(merges[1][0].shape, (5,7)) 
-        self.assertTupleEqual(merges[1][1].shape, (5,)) 
+        self.assertTupleEqual(merges[1][1].shape, (5,))
+
+    def testZeroBatch(self):
+        batch1 = (np.ones((2,5)), [np.zeros((2,7)), np.ones((2,))])
+        batch2 = []
+        merges = merge_batches(batch1, batch2)
+
+        self.assertIsInstance(merges, tuple)
+        self.assertIsInstance(merges[1], list)
+        self.assertIsInstance(merges[0], np.ndarray)
+
+        self.assertTupleEqual(merges[0].shape, (2,5))
+        self.assertTupleEqual(merges[1][0].shape, (2,7)) 
+        self.assertTupleEqual(merges[1][1].shape, (2,)) 
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,16 +9,19 @@ import random
 import time
 import sys
 
-from ..environment.environment import Environment
-from ..model.model import UnrealModel
-from ..train.experience import Experience, ExperienceFrame
+from .environment.environment import Environment
+from .model.model import UnrealModel
+from .train.experience import Experience, ExperienceFrame
+from ..a2c_unreal.storage import ExperienceReplay
+from ..common.storage import split_batched_items
 
-LOG_INTERVAL = 100
-PERFORMANCE_LOG_INTERVAL = 1000
+from ..common.schedules import LinearSchedule
 
+from ..a2c_unreal.util import pixel_control_reward
 
-class Trainer(object):
+class A3CAgent(object):
     def __init__(self,
+                    sess,
                  thread_index,
                  global_network,
                  initial_learning_rate,
@@ -38,10 +41,14 @@ class Trainer(object):
                  max_global_time_step,
                  device):
 
+        self._global_t = None
+        self.sess = sess
+
         self.thread_index = thread_index
         self.learning_rate_input = learning_rate_input
         self.env_type = env_type
         self.env_name = env_name
+        self.environment = None
         self.use_pixel_change = use_pixel_change
         self.use_value_replay = use_value_replay
         self.use_reward_prediction = use_reward_prediction
@@ -67,19 +74,19 @@ class Trainer(object):
                                                            self.local_network.get_vars())
 
         self.sync = self.local_network.sync_from(global_network)
-        self.experience = Experience(self.experience_history_size)
+        self.experience = ExperienceReplay(self.experience_history_size, self.local_t_max)
         self.local_t = 0
-        self.initial_learning_rate = initial_learning_rate
+
+        self.learning_rate_schedule = LinearSchedule(7e-4, 0.0, max_global_time_step)
+        self.learning_rate_schedule.step(0)
+
+        self.initial_learning_rate = 7e-4# initial_learning_rate # self.learning_rate_schedule()
         self.episode_reward = 0
+        self.episode_length = 0
         # For log output
         self.prev_local_t = 0
 
-    def prepare(self):
-        self.environment = Environment.create_environment(self.env_type,
-                                                          self.env_name)
-
-    def stop(self):
-        self.environment.stop()
+        self._last_state = None
 
     def _anneal_learning_rate(self, global_time_step):
         learning_rate = self.initial_learning_rate * \
@@ -89,57 +96,49 @@ class Trainer(object):
             learning_rate = 0.0
         return learning_rate
 
+    def run(self, process, **kwargs):
+        self._global_t = 0
+        self._is_stopped = False
+
+        while not self._is_stopped:
+            tdiff, _, _ = process(mode = 'train', context = dict())
+            self._global_t += tdiff
+
+        return None
+        
+
+    def initialize(self):
+        self.environment = self.create_env()
+
+    def stop(self):
+        self.environment.stop()
+
     def choose_action(self, pi_values):
         return np.random.choice(range(len(pi_values)), p=pi_values)
 
-    def _record_score(self, sess, summary_writer, summary_op, score_input, score, global_t):
-        summary_str = sess.run(summary_op, feed_dict={
-            score_input: score
-        })
-        summary_writer.add_summary(summary_str, global_t)
-        summary_writer.flush()
-
-    def set_start_time(self, start_time):
-        self.start_time = start_time
-
-    def _fill_experience(self, sess):
+    def _fill_experience(self):
         """
         Fill experience buffer until buffer is full.
         """
-        prev_state = self.environment.last_state
-        last_action = self.environment.last_action
-        last_reward = self.environment.last_reward
-        last_action_reward = ExperienceFrame.concat_action_and_reward(last_action,
-                                                                      self.action_size,
-                                                                      last_reward)
+        if self._last_state is None:
+            self._last_state = self.environment.reset()
 
-        pi_, _ = self.local_network.run_base_policy_and_value(sess,
-                                                              self.environment.last_state,
-                                                              last_action_reward)
+        pi_, _ = self.local_network.run_base_policy_and_value(self.sess, *self._last_state)
         action = self.choose_action(pi_)
 
-        new_state, reward, terminal, pixel_change = self.environment.process(
-            action)
+        new_state, reward, terminal, stats = self.environment.step(action)
+        self._last_state = new_state
 
-        frame = ExperienceFrame(prev_state, reward, action, terminal, pixel_change,
-                                last_action, last_reward)
-        self.experience.add_frame(frame)
+        self.experience.insert(self._last_state, action, reward, terminal)
+        
 
         if terminal:
-            self.environment.reset()
-        if self.experience.is_full():
-            self.environment.reset()
+            self._last_state = self.environment.reset()
+        if self.experience.full:
+            self._last_state = self.environment.reset()
             print("Replay buffer filled")
 
-    def _print_log(self, global_t):
-        if (self.thread_index == 0) and (self.local_t - self.prev_local_t >= PERFORMANCE_LOG_INTERVAL):
-            self.prev_local_t += PERFORMANCE_LOG_INTERVAL
-            elapsed_time = time.time() - self.start_time
-            steps_per_sec = global_t / elapsed_time
-            print("### Performance : {} STEPS in {:.0f} sec. {:.0f} STEPS/sec. {:.2f}M STEPS/hour".format(
-                global_t,  elapsed_time, steps_per_sec, steps_per_sec * 3600 / 1000000.))
-
-    def _process_base(self, sess, global_t):
+    def _process_base(self):
         epend = None
         # [Base A3C]
         states = []
@@ -155,39 +154,28 @@ class Trainer(object):
         # t_max times loop
         for _ in range(self.local_t_max):
             # Prepare last action reward
-            last_action = self.environment.last_action
-            last_reward = self.environment.last_reward
-            last_action_reward = ExperienceFrame.concat_action_and_reward(last_action,
-                                                                          self.action_size,
-                                                                          last_reward)
+            observation, last_action_reward = self._last_state
 
-            pi_, value_ = self.local_network.run_base_policy_and_value(sess,
-                                                                       self.environment.last_state,
-                                                                       last_action_reward)
+            pi_, value_ = self.local_network.run_base_policy_and_value(self.sess, *self._last_state)
 
             action = self.choose_action(pi_)
 
-            states.append(self.environment.last_state)
+            states.append(observation)
             last_action_rewards.append(last_action_reward)
             actions.append(action)
             values.append(value_)
 
-            if (self.thread_index == 0) and (self.local_t % LOG_INTERVAL == 0):
-                print("pi={}".format(pi_))
-                print(" V={}".format(value_))
-
-            prev_state = self.environment.last_state
+            prev_state = self._last_state
 
             # Process game
-            new_state, reward, terminal, pixel_change = self.environment.process(
-                action)
-            frame = ExperienceFrame(prev_state, reward, action, terminal, pixel_change,
-                                    last_action, last_reward)
+            new_state, reward, terminal, stats = self.environment.step(action)
+            self._last_state = new_state
 
             # Store to experience
-            self.experience.add_frame(frame)
+            self.experience.insert(prev_state, action, reward, terminal)
 
             self.episode_reward += reward
+            self.episode_length += 1
 
             rewards.append(reward)
 
@@ -195,19 +183,18 @@ class Trainer(object):
 
             if terminal:
                 terminal_end = True
-                print("score={}".format(self.episode_reward))
-                epend = (self.local_t, self.episode_reward)
-                
+                epend = (self.episode_length, self.episode_reward)              
 
                 self.episode_reward = 0
-                self.environment.reset()
+                self.episode_length = 0
+                self._last_state = self.environment.reset()
                 self.local_network.reset_state()
                 break
 
         R = 0.0
         if not terminal_end:
             R = self.local_network.run_base_value(
-                sess, new_state, frame.get_action_reward(self.action_size))
+                self.sess, *self._last_state)
 
         actions.reverse()
         states.reverse()
@@ -237,11 +224,21 @@ class Trainer(object):
 
         return batch_si, last_action_rewards, batch_a, batch_adv, batch_R, start_lstm_state, epend
 
-    def _process_pc(self, sess):
+    def _subsample(self, a, average_width):
+        s = a.shape
+        sh = s[0]//average_width, average_width, s[1]//average_width, average_width
+        return a.reshape(sh).mean(-1).mean(1)  
+
+    def _calc_pixel_change(self, state, last_state):
+        d = np.absolute(state[2:-2,2:-2,:] - last_state[2:-2,2:-2,:])
+        # (80,80,3)
+        m = np.mean(d, 2)
+        c = self._subsample(m, 4)
+        return c
+
+    def _process_pc(self):
         # [pixel change]
-        # Sample 20+1 frame (+1 for last next state)
-        pc_experience_frames = self.experience.sample_sequence(
-            self.local_t_max+1)
+        pc_experience_frames = split_batched_items(self.experience.sample_sequence())
         # Revese sequence to calculate from the last
         pc_experience_frames.reverse()
 
@@ -251,18 +248,17 @@ class Trainer(object):
         batch_pc_last_action_reward = []
 
         pc_R = np.zeros([20, 20], dtype=np.float32)
-        if not pc_experience_frames[1].terminal:
-            pc_R = self.local_network.run_pc_q_max(sess,
-                                                   pc_experience_frames[0].state,
-                                                   pc_experience_frames[0].get_last_action_reward(self.action_size))
+        if not pc_experience_frames[1][3]:
+            pc_R = self.local_network.run_pc_q_max(self.sess, *pc_experience_frames[0][0])
 
-        for frame in pc_experience_frames[1:]:
-            pc_R = frame.pixel_change + self.gamma_pc * pc_R
+        for i, frame in enumerate(pc_experience_frames[1:]):
+            pixel_change = self._calc_pixel_change(pc_experience_frames[i][0][0], frame[0][0])
+            pc_R = pixel_change + self.gamma_pc * pc_R
             a = np.zeros([self.action_size])
-            a[frame.action] = 1.0
-            last_action_reward = frame.get_last_action_reward(self.action_size)
+            a[frame[1]] = 1.0
+            last_action_reward = frame[0][1]
 
-            batch_pc_si.append(frame.state)
+            batch_pc_si.append(frame[0][0])
             batch_pc_a.append(a)
             batch_pc_R.append(pc_R)
             batch_pc_last_action_reward.append(last_action_reward)
@@ -274,11 +270,10 @@ class Trainer(object):
 
         return batch_pc_si, batch_pc_last_action_reward, batch_pc_a, batch_pc_R
 
-    def _process_vr(self, sess):
+    def _process_vr(self):
         # [Value replay]
         # Sample 20+1 frame (+1 for last next state)
-        vr_experience_frames = self.experience.sample_sequence(
-            self.local_t_max+1)
+        vr_experience_frames = split_batched_items(self.experience.sample_sequence())
         # Revese sequence to calculate from the last
         vr_experience_frames.reverse()
 
@@ -287,18 +282,15 @@ class Trainer(object):
         batch_vr_last_action_reward = []
 
         vr_R = 0.0
-        if not vr_experience_frames[1].terminal:
-            vr_R = self.local_network.run_vr_value(sess,
-                                                   vr_experience_frames[0].state,
-                                                   vr_experience_frames[0].get_last_action_reward(self.action_size))
+        if not vr_experience_frames[1][3]:
+            vr_R = self.local_network.run_vr_value(self.sess, *vr_experience_frames[0][0])
 
         # t_max times loop
         for frame in vr_experience_frames[1:]:
-            vr_R = frame.reward + self.gamma * vr_R
-            batch_vr_si.append(frame.state)
+            vr_R = frame[2] + self.gamma * vr_R
+            batch_vr_si.append(frame[0][0])
             batch_vr_R.append(vr_R)
-            last_action_reward = frame.get_last_action_reward(self.action_size)
-            batch_vr_last_action_reward.append(last_action_reward)
+            batch_vr_last_action_reward.append(frame[0][1])
 
         batch_vr_si.reverse()
         batch_vr_R.reverse()
@@ -308,17 +300,17 @@ class Trainer(object):
 
     def _process_rp(self):
         # [Reward prediction]
-        rp_experience_frames = self.experience.sample_rp_sequence()
+        rp_experience_frames = split_batched_items(self.experience.sample_rp_sequence())
         # 4 frames
 
         batch_rp_si = []
         batch_rp_c = []
 
         for i in range(3):
-            batch_rp_si.append(rp_experience_frames[i].state)
+            batch_rp_si.append(rp_experience_frames[i][0][0])
 
         # one hot vector for target reward
-        r = rp_experience_frames[3].reward
+        r = rp_experience_frames[3][2]
         rp_c = [0.0, 0.0, 0.0]
         if r == 0:
             rp_c[0] = 1.0  # zero
@@ -329,23 +321,23 @@ class Trainer(object):
         batch_rp_c.append(rp_c)
         return batch_rp_si, batch_rp_c
 
-    def process(self, sess, global_t):
+    def process(self, mode = 'train', **kwargs):
         # Fill experience replay buffer
-        if not self.experience.is_full():
-            self._fill_experience(sess)
+        if not self.experience.full:
+            self._fill_experience()
             return 0, None, dict()
 
         start_local_t = self.local_t
 
-        cur_learning_rate = self._anneal_learning_rate(global_t)
+        self.learning_rate_schedule.step(self._global_t)
+        cur_learning_rate = self.learning_rate_schedule()
 
         # Copy weights from shared to local
-        sess.run(self.sync)
+        self.sess.run(self.sync)
 
         # [Base]
         batch_si, batch_last_action_rewards, batch_a, batch_adv, batch_R, start_lstm_state, epend = \
-            self._process_base(sess,
-                               global_t)
+            self._process_base()
         feed_dict = {
             self.local_network.base_input: batch_si,
             self.local_network.base_last_action_reward_input: batch_last_action_rewards,
@@ -359,9 +351,7 @@ class Trainer(object):
 
         # [Pixel change]
         if self.use_pixel_change:
-            batch_pc_si, batch_pc_last_action_reward, batch_pc_a, batch_pc_R = self._process_pc(
-                sess)
-
+            batch_pc_si, batch_pc_last_action_reward, batch_pc_a, batch_pc_R = self._process_pc()
             pc_feed_dict = {
                 self.local_network.pc_input: batch_pc_si,
                 self.local_network.pc_last_action_reward_input: batch_pc_last_action_reward,
@@ -372,8 +362,7 @@ class Trainer(object):
 
         # [Value replay]
         if self.use_value_replay:
-            batch_vr_si, batch_vr_last_action_reward, batch_vr_R = self._process_vr(
-                sess)
+            batch_vr_si, batch_vr_last_action_reward, batch_vr_R = self._process_vr()
 
             vr_feed_dict = {
                 self.local_network.vr_input: batch_vr_si,
@@ -392,9 +381,7 @@ class Trainer(object):
             feed_dict.update(rp_feed_dict)
 
         # Calculate gradients and copy them to global netowrk.
-        sess.run(self.apply_gradients, feed_dict=feed_dict)
-
-        self._print_log(global_t)
+        self.sess.run(self.apply_gradients, feed_dict=feed_dict)
 
         # Return advanced local step size
         diff_local_t = self.local_t - start_local_t

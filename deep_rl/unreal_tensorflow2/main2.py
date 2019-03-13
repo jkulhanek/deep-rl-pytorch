@@ -2,6 +2,7 @@ import tensorflow as tf
 import threading
 import numpy as np
 from collections import namedtuple
+import gym
 
 import signal
 import random
@@ -17,16 +18,20 @@ from .train.rmsprop_applier import RMSPropApplier
 from .core import ThreadServerTrainer
 from deep_rl.core import SingleTrainer
 
+from deep_rl.common.env import ScaledFloatFrame, RewardCollector
+
 from deep_rl import register_trainer, make_trainer
+
+from experiments.seekavoid_a2c_lstm import UnrealEnvBaseWrapper
 
 USE_GPU = True  # To use GPU, set True
 
 # get command line args
 flags = dict(env_type="lab",
              env_name="nav_maze_static_01",
-             use_pixel_change=True,
-             use_value_replay=True,
-             use_reward_prediction=True,
+             use_pixel_change=False,
+             use_value_replay=False,
+             use_reward_prediction=False,
              checkpoint_dir="/tmp/unreal_checkpoints",
              parallel_size=8,
              local_t_max=20,
@@ -61,7 +66,7 @@ initial_learning_rate = log_uniform(flags.initial_alpha_low,
 action_size = Environment.get_action_size(flags.env_type,
                                         flags.env_name)
 
-@register_trainer('unreal-tensorflow', max_time_steps = 40e6, validation_period = None, validation_episodes = None,  episode_log_interval = 10, saving_period = 500000, save = False)
+@register_trainer('unreal-tensorflow2', max_time_steps = 40e6, validation_period = None, validation_episodes = None,  episode_log_interval = 10, saving_period = 500000, save = False)
 class A3CTrainer(ThreadServerTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -97,6 +102,7 @@ class A3CTrainer(ThreadServerTrainer):
                               grad_applier,
                               flags.env_type,
                               flags.env_name,
+                              self._create_env(self._env_kwargs),
                               flags.use_pixel_change,
                               flags.use_value_replay,
                               flags.use_reward_prediction,
@@ -124,9 +130,18 @@ class A3CTrainer(ThreadServerTrainer):
         self.next_save_steps = flags.save_interval_step        
         super()._initialize(**model_kwargs)
 
+    def create_env(self, env):
+        return None
+
+    def _create_env(self, env):
+        env = gym.make(**env)
+        env = RewardCollector(env)
+        env = ScaledFloatFrame(env)
+        env = UnrealEnvBaseWrapper(env)
+        return env
+
     def create_worker(self, id, env_kwargs, model_kwargs):
         trainer = self.trainers[id]
-        trainer.prepare()
 
         # set start_time
         trainer.set_start_time(self.start_time)
@@ -136,7 +151,7 @@ class A3CTrainer(ThreadServerTrainer):
             def process(self, *args, **kwargs):       
                 return trainer.process(sess, self._global_t)
 
-            def create_env(self, *args, **kwargs):
+            def create_env(self, env):
                 return None
 
         return ThreadTrainer(env_kwargs = env_kwargs, model_kwargs = model_kwargs)

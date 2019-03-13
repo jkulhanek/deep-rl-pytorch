@@ -90,7 +90,7 @@ class SubprocVecEnv(VecEnv):
         results = [remote.recv() for remote in self.remotes]
         self.waiting = False
         obs, rews, dones, infos = zip(*results)
-        return flatten_observations(obs), np.stack(rews), np.stack(dones), infos
+        return flatten_observations(obs), np.stack(rews).astype(np.float32), np.stack(dones).astype(np.bool), infos
 
     def reset(self):
         self._assert_not_closed()

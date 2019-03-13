@@ -42,6 +42,7 @@ class A2CModel:
         self.rms_alpha = 0.99
         self.rms_epsilon = 1e-5
         self.data_parallel = True
+        self.learning_rate = 7e-4
 
         def not_initialized(*args, **kwargs):
             raise Exception('Not initialized')
@@ -50,10 +51,6 @@ class A2CModel:
     @abstractclassmethod
     def create_model(self, **kwargs):
         pass
-
-    @property
-    def learning_rate(self):
-        return 7e-4
 
     def show_summary(self, model):
         batch_shape = (self.num_processes, self.num_steps) 
@@ -158,7 +155,7 @@ class A2CModel:
         return model
 
 class A2CTrainer(SingleTrainer, A2CModel):
-    def __init__(self, name, env_kwargs, model_kwargs, devices = []):
+    def __init__(self, name, env_kwargs, model_kwargs, devices = [], **kwargs):
         super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
         self.name = name
         self.num_steps = 5

@@ -39,10 +39,12 @@ def make_trainer(id = None, **kwargs):
     if id is None:
         id = get_dynamic_name()
 
-    instance = _registry[id]['trainer'](name = id, **kwargs)
-
     wargs = dict(**_registry[id])
     del wargs['trainer']
+
+    tkwargs = dict(**wargs)
+    tkwargs.update(kwargs)
+    instance = _registry[id]['trainer'](name = id, **tkwargs)    
     instance = wrappers.wrap(instance, **wargs).compile()
     return instance
 

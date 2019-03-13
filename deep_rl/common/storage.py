@@ -21,8 +21,7 @@ def split_batched_items(items, axis = 0):
     else:
         raise Exception('Type not supported')
 
-def merge_batches(*batches, **kwargs):
-    axis = kwargs.get('axis', 0)
+def _merge_batches(batches, axis):
     if isinstance(batches[0], np.ndarray):
         return np.concatenate(batches, axis)
 
@@ -31,6 +30,14 @@ def merge_batches(*batches, **kwargs):
     
     elif isinstance(batches[0], list):
         return [merge_batches(*[x[i] for x in batches], axis = axis) for i in range(len(batches[0]))]
+
+def merge_batches(*batches, **kwargs):
+    axis = kwargs.get('axis', 0)
+    batches = [x for x in batches if not isinstance(x, list) or len(x) != 0]
+    if len(batches) == 1:
+        return batches[0]
+
+    return _merge_batches(batches, axis)
         
 class NewSelectionException(Exception):
     pass
@@ -173,12 +180,16 @@ class BatchSequenceStorage:
         for storage, row in zip(self.storages, rows):
             storage.insert(*row)
     
+    @property
     def full(self):
         return all([x.full for x in self.storages])
 
     def sample(self, sampler, batch_size = None):
         if batch_size is None:
             batch_size = len(self.storages)
+
+        if batch_size == 0:
+            return []
 
         probs = np.array([x.selector_lengths[sampler] for x in self.storages], dtype = np.float32)
         probs = probs / np.sum(probs)

@@ -8,7 +8,7 @@ from functools import partial
 
 class ThreadServerTrainer(AbstractTrainer):
     def __init__(self, name, env_kwargs, model_kwargs, **kwargs):
-        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs, **kwargs)
+        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
         self.name = name
         self._report_queue = Queue(maxsize = 16)
         self._shared_global_t = Value('i', 0)

@@ -12,7 +12,7 @@ import sys
 from ..environment.environment import Environment
 from ..model.model import UnrealModel
 from ..train.experience import Experience, ExperienceFrame
-from ...unreal.storage import ExperienceReplay2
+from ...a2c_unreal.storage import ExperienceReplay as ExperienceReplay2
 from ...common.storage import split_batched_items
 
 LOG_INTERVAL = 100
