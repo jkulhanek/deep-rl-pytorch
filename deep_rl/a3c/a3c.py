@@ -5,7 +5,7 @@ from ..common.env import make_vec_envs, VecTransposeImage
 from ..common.multiprocessing import ProcessServerTrainer
 from .trainer import A3CWorker
 from ..common.util import serialize_function
-from ..optim.shared_adam import SharedAdam
+from ..optim.shared_rmsprop import SharedRMSprop
 
 class A3CTrainer(ProcessServerTrainer):
     def __init__(self, *args, **kwargs):
@@ -17,6 +17,8 @@ class A3CTrainer(ProcessServerTrainer):
         self.value_coefficient = 0.5
         self.max_gradient_norm = 0.5
         self.learning_rate = 7e-4
+        self.rms_alpha = 0.99
+        self.rms_epsilon = 1e-5
         self.log_dir = None
 
     @abstractclassmethod
@@ -24,8 +26,11 @@ class A3CTrainer(ProcessServerTrainer):
         pass
 
     def _initialize(self, **model_kwargs):
+        if hasattr(self, 'schedules') and 'learning_rate' in self.schedules:
+            raise Exception('Learning rate schedule is not yet implemented for a3c')
+
         self.model = self.create_model(**model_kwargs).share_memory()
-        self.optimizer = SharedAdam(self.model.parameters(), self.learning_rate).share_memory()
+        self.optimizer = SharedRMSprop(self.model.parameters(), self.learning_rate, self.rms_alpha, self.rms_epsilon).share_memory()
         super()._initialize(**model_kwargs)
         return self.model   
 

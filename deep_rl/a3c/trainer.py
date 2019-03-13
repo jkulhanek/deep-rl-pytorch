@@ -47,7 +47,7 @@ class A3CWorker:
 
         self.entropy_coefficient = 0.01
         self.value_coefficient = 0.5
-        self.max_gradient_norm = 0.5
+        self.max_gradient_norm = 40.0
         self.num_steps = 5
         self.gamma = 0.99
 
