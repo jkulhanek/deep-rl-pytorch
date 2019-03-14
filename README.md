@@ -12,6 +12,14 @@ If you want to run attached experiments yourself, feel free to clone this reposi
 git clone https://github.com/jkulhanek/deep-rl-pytorch.git
 ```
 
+All dependencies are prepared in a docker container. If you have nvidia-docker enabled, you can use this image. To pull and start the image, just run:
+
+```
+docker run --runtime=nvidia --net=host -it kulhanek/deep-rl-pytorch:latest bash
+```
+
+From there, you can either clone your own repository containing your experiments or clone this one.
+
 ## Concepts
 All algorithms are implemented as base classes. In your experiment your need to subclass from those base classes. The `deep_rl.core.AbstractTrainer` class is used for all trainers and all algorithms inherit this class. Each trainer can be wrapped in several wrappers (classes extending `deep_rl.core.AbstractWrapper`). Those wrappers are used for saving, logging, terminating the experiment and etc. All experiments should be registered using `@deep_rl.register_trainer` decorator. This decorator than wraps the trainer with default wrappers. This can be controlled by passing arguments to the decorator. All registered trainers (experiments) can be run by calling `deep_rl.make_trainer(<<name>>).run()`.
 
