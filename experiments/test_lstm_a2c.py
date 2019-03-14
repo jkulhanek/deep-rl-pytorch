@@ -6,19 +6,21 @@ import torch
 import torch.nn as nn
 
 from deep_rl import register_trainer, make_trainer
-from deep_rl.a2c import A2CTrainer as Trainer
+from deep_rl.a2c import A2CTrainer as Trainer, create_vec_envs
 from deep_rl.a2c.model import LSTMMultiLayerPerceptron, TimeDistributed
 from deep_rl.common.pytorch import forward_masked_rnn_transposed
-from deep_rl.common.env import make_vec_envs
+from deep_rl.common.env import RewardCollector
+
+from deep_rl.model import TimeDistributed, Flatten, MaskedRNN
 
 class Model(nn.Module):
     def __init__(self, action_space_size):
         super().__init__()
         
-        self.rnn = nn.LSTM(action_space_size, 
+        self.rnn = MaskedRNN(nn.LSTM(action_space_size, 
             hidden_size = 16, 
             num_layers = 1,
-            batch_first = True)
+            batch_first = True))
 
         self.actor = TimeDistributed(nn.Linear(16, action_space_size))
         self.critic = TimeDistributed(nn.Linear(16, 1))
@@ -27,7 +29,7 @@ class Model(nn.Module):
         return tuple([torch.zeros([batch_size, 1, 16], dtype = torch.float32) for _ in range(2)])
 
     def forward(self, inputs, masks, states):
-        features, states = forward_masked_rnn_transposed(inputs, masks, states, self.rnn)
+        features, states = self.rnn(inputs, masks, states)
         return self.actor(features), self.critic(features), states
 
 class TestLstm(gym.Env):
@@ -76,6 +78,13 @@ class SomeTrainer(Trainer):
         self.num_steps = 10
         self.allow_gpu = False
 
+    def create_env(self, env_kwargs):
+        def thunk():
+            return RewardCollector(gym.make(**env_kwargs))
+            
+        env, self.validation_env = create_vec_envs(thunk, self.num_processes)
+        return env
+
     def create_model(self, **model_kwargs):
         observation_space = self.env.observation_space
         action_space_size = self.env.action_space.n
@@ -84,5 +93,5 @@ class SomeTrainer(Trainer):
 def default_args():
     return dict(
         model_kwargs = dict(),
-        env_kwargs = 'lstm-v1'
+        env_kwargs = dict(id = 'lstm-v1')
     )
