@@ -48,7 +48,8 @@ RUN pip3 install --upgrade pip
 # Tensorflow is needed for baselines
 RUN pip3 install tensorflow
 
-RUN pip3 install matplotlib six seaborn visdom gym gym[atari] && \
+RUN pip3 install matplotlib six seaborn visdom gym && \
+  pip3 install gym[atari] && \
   pip3 install /tmp/DeepMind_Lab-1.0-py3-none-any.whl && \
   pip3 install git+https://github.com/openai/baselines.git
 
