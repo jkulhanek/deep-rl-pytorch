@@ -12,7 +12,7 @@ If you want to run attached experiments yourself, feel free to clone this reposi
 git clone https://github.com/jkulhanek/deep-rl-pytorch.git
 ```
 
-All dependencies are prepared in a docker container. If you have nvidia-docker enabled, you can use this image. To pull and start the image, just run:
+All dependencies are prepared in a docker container. If you have nvidia-docker enabled, you can use this image. To pull and start the image just run:
 
 ```
 docker run --runtime=nvidia --net=host -it kulhanek/deep-rl-pytorch:latest bash
