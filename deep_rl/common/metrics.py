@@ -145,6 +145,19 @@ class DataHandler(MetricHandlerBase):
         self._was_initialized = True
         self._metrics = defaultdict(lambda: ([], []))
 
+def load_metrics(file):
+    import csv
+
+    metrics = defaultdict(lambda: ([], []))
+    for line in csv.reader(file):
+        name = line[0]
+        count = line[1]
+        times = line[2:(2 + count)]
+        values = line[(2 + count):]
+        metrics[name][0].extend(times)
+        metrics[name][1].extend(values)
+    return metrics
+
 class MetricWriter:
     class _MetricRecordFactory:
         def __init__(self, time, flush, mode):
