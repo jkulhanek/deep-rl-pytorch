@@ -114,9 +114,9 @@ class LambdaAgent(AbstractAgent):
 
 
 class AbstractTrainer:
-    def __init__(self, env_kwargs, model_kwargs, **kwargs):
+    def __init__(self, env_kwargs, model_kwargs, *args, **kwargs):
         self.schedules = dict()
-        super().__init__(**kwargs)
+        super().__init__(*args, **kwargs)
         self.env = None
         self._env_kwargs = env_kwargs
         self.model = None

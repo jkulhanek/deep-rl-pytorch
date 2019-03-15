@@ -95,7 +95,7 @@ class ProcessServerTrainer(AbstractTrainer):
 
 class ThreadServerTrainer(AbstractTrainer):
     def __init__(self, name, env_kwargs, model_kwargs, **kwargs):
-        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs, **kwargs)
+        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
         self.name = name
         self.num_processes = 16
 
