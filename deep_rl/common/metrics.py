@@ -151,9 +151,9 @@ def load_metrics(file):
     metrics = defaultdict(lambda: ([], []))
     for line in csv.reader(file):
         name = line[0]
-        count = line[1]
-        times = line[2:(2 + count)]
-        values = line[(2 + count):]
+        count = int(line[1])
+        times = list(map(int, line[2:(2 + count)]))
+        values = list(map(float, line[(2 + count):]))
         metrics[name][0].extend(times)
         metrics[name][1].extend(values)
     return metrics
