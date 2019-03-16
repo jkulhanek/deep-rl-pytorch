@@ -7,7 +7,6 @@ from ..common.pytorch import pytorch_call
 class ACKTRTrainer(A2CTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._optimizer = None
 
     def _build_train(self, model, main_device):
         optimizer = KFACOptimizer(model, self.learning_rate)
