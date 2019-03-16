@@ -151,7 +151,7 @@ def create_visdom(session_name, configuration):
         return None
 
     from visdom import Visdom
-    return Visdom(env = session_name, **configuration)
+    return Visdom(env = session_name, **configuration.as_dict())
 
 def load_metrics(file):
     import csv
@@ -186,7 +186,7 @@ class MetricWriter:
     def __init__(self, use_tensorboard = False, session_name = 'main', logdir = './logs'):
         self._use_tensorboard = use_tensorboard
         self._logdir = logdir
-        self.visdom = create_visdom(session_name, configuration.visdom.as_dict())
+        self.visdom = create_visdom(session_name, configuration.visdom)
 
         if self.visdom is not None:
             self.handlers = [VisdomHandler(self.visdom), MatplotlibHandler(interactive=False)]

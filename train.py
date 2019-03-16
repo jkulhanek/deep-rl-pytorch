@@ -1,8 +1,15 @@
 import argparse
-from deep_rl import make_trainer
+from deep_rl import make_trainer, configure
 import torch.multiprocessing as mp
 
 if __name__ == '__main__':
+    configure(
+        visdom=dict(
+            server='http://localhost',
+            port=8097
+        )
+    )
+
     # Set mp method to spawn
     # Fork does not play well with pytorch
     mp.set_start_method('spawn')

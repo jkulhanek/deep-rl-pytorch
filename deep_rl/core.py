@@ -215,6 +215,11 @@ class CompiledTrainer(AbstractTrainerWrapper):
     def run(self, **kwargs):
         return self.trainer.run(self.process)
 
+    
+    def test(self):
+        from .common.tester import test_trainer
+        test_trainer(self)
+
     def __repr__(self):
         return '<Compiled %s>' % self.trainer.__repr__()
 

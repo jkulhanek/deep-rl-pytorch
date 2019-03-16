@@ -119,10 +119,6 @@ configuration = wrap_config(store)
 
 # Apply default configuration
 configuration.update(dict(
-    visdom=dict(
-        server='http://localhost',
-        port=8097
-    )
 ))
 
 

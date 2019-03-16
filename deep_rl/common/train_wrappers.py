@@ -13,6 +13,7 @@ class SaveWrapper(AbstractTrainerWrapper):
         self.model_root_directory = model_root_directory
         self._last_save = 0
         self.saving_period = saving_period
+        self._enabled = True
 
     def process(self, **kwargs):
         res = self.trainer.process(**kwargs)
@@ -26,6 +27,9 @@ class SaveWrapper(AbstractTrainerWrapper):
         return res
 
     def _save(self):
+        if not self._enabled:
+            return
+            
         print('Saving')
         path = os.path.join(self.model_root_directory, self.unwrapped.name)
         if not os.path.exists(path):
