@@ -4,6 +4,7 @@ from collections import defaultdict
 import numpy as np
 
 import matplotlib.pyplot as plt
+from ..configuration import configuration
 
 class MetricHandlerBase:
     def __init__(self, name, *args, **kwargs):
@@ -145,6 +146,13 @@ class DataHandler(MetricHandlerBase):
         self._was_initialized = True
         self._metrics = defaultdict(lambda: ([], []))
 
+def create_visdom(session_name, configuration):
+    if configuration is None or configuration.server is None:
+        return None
+
+    from visdom import Visdom
+    return Visdom(env = session_name, **configuration)
+
 def load_metrics(file):
     import csv
 
@@ -175,13 +183,12 @@ class MetricWriter:
             self.collection.clear()
             return self
 
-    def __init__(self, use_tensorboard = False, use_visdom = True, visdom = None, session_name = 'main', logdir = './logs'):
+    def __init__(self, use_tensorboard = False, session_name = 'main', logdir = './logs'):
         self._use_tensorboard = use_tensorboard
         self._logdir = logdir
+        self.visdom = create_visdom(session_name, configuration.visdom.as_dict())
 
-        if use_visdom:
-            from visdom import Visdom
-            self.visdom = Visdom(env = session_name) if visdom is None else visdom
+        if self.visdom is not None:
             self.handlers = [VisdomHandler(self.visdom), MatplotlibHandler(interactive=False)]
         else:
             self.handlers = [MatplotlibHandler()]
