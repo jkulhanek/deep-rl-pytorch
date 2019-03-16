@@ -133,14 +133,20 @@ class UnrealModelBase:
 
             # Compute A2C gradients
             loss, action_loss, value_loss, dist_entropy = self._loss_a2c(model, a2c_batch)
-            loss.backward()
-            loss, action_loss, value_loss, dist_entropy = loss.item(), action_loss.item(), value_loss.item(), dist_entropy.item()
+
+            # loss.backward()
+            # When there is not enough memory
+            # You may need to accumulate gradients after each auxiliary task
+            # And to destroy the computation graph to free memory
+            # However, if your graph is small and fit the memory
+            # You can accumulate loss and evaluate it after accumulating all
+            action_loss, value_loss, dist_entropy = action_loss.item(), value_loss.item(), dist_entropy.item()
 
 
             # Compute pixel change gradients
             if not pixel_control_batch is None:
                 pixel_control_loss = self._loss_pixel_control(model, pixel_control_batch, main_device)
-                (pixel_control_loss * self.pc_weight).backward()
+                loss += (pixel_control_loss * self.pc_weight)
                 pixel_control_loss = pixel_control_loss.item()
             else:
                 pixel_control_loss = None
@@ -148,7 +154,7 @@ class UnrealModelBase:
             # Compute value replay gradients
             if not value_replay_batch is None:
                 value_replay_loss = self._loss_value_replay(model, value_replay_batch, main_device)
-                (value_replay_loss * self.vr_weight).backward()
+                loss += (value_replay_loss * self.vr_weight)
                 value_replay_loss = value_replay_loss.item()
             else:
                 value_replay_loss = None
@@ -156,15 +162,17 @@ class UnrealModelBase:
             # Compute reward prediction gradients
             if not reward_prediction_batch is None:
                 reward_prediction_loss = self._loss_reward_prediction(model, reward_prediction_batch)
-                (reward_prediction_loss * self.rp_weight).backward()
+                loss += (reward_prediction_loss * self.rp_weight)
                 reward_prediction_loss = reward_prediction_loss.item()
             else:
                 reward_prediction_loss = None
 
             # Optimize
+            loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.max_gradient_norm)
             optimizer.step()
 
+            loss = loss.item()
             return loss, action_loss, value_loss, dist_entropy, pixel_control_loss, value_replay_loss, reward_prediction_loss
 
         return train
