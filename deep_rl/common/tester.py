@@ -68,15 +68,16 @@ def test_trainer(trainer):
     with tempfile.TemporaryDirectory() as tmpdir:
 
         # Replace create env with dummy env
-        trainer.unwrapped._create_env = _create_env
+        trainer.unwrapped.create_env = _create_env
         
         t = trainer
         while hasattr(t, 'trainer'):
             # Redirect saving to temp directory
             if t.__class__.__name__ == 'SaveWrapper':
-                t.model_root_directory = tmpdir.name
+                t.model_root_directory = tmpdir
 
             t = t.trainer
+        trainer.unwrapped.allow_gpu = False
 
         process_base = trainer.process
         def process(*args, **kwargs):
