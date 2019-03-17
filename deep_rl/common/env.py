@@ -152,8 +152,18 @@ class TransposeImage(TransposeObs):
                 obs_shape[self.op[2]]],
             dtype=self.observation_space.dtype)
 
+    def transpose_observation(self, ob, space):
+        if space.__class__.__name__ == 'Box':
+            if len(space.shape) == 3:
+                return ob if ob is None else np.transpose(ob, axes = self.op)
+            return ob
+        elif space.__class__.__name__ == 'Tuple':
+            return tuple(map(self.transpose_observation, zip(ob, space.spaces)))
+        else:
+            raise Exception('Environment type is not supported')
+
     def observation(self, ob):
-        return ob if ob is None else np.transpose(ob, axes = self.op)
+        return self.transpose_observation(ob, self.env.observation_space)
 
 class VecTransposeImage(VecEnvWrapper):
     def __init__(self, venv, transpose = [2, 0, 1]):
@@ -205,13 +215,24 @@ class ScaledFloatFrame(gym.ObservationWrapper):
         gym.ObservationWrapper.__init__(self, env)
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=env.observation_space.shape, dtype=np.float32)
 
-    def observation(self, observation):
+    def transform_observation(self, ob, space):
+        if space.__class__.__name__ == 'Box':
+            if len(space.shape) == 3 and space.dtype == np.uint8:
+                return ob if ob is None else np.array(ob).astype(np.float32) / 255.0
+            return ob
+        elif space.__class__.__name__ == 'Tuple':
+            return tuple(map(self.transform_observation, zip(ob, space.spaces)))
+        else:
+            raise Exception('Environment type is not supported')
+
+    def observation(self, ob):
         # careful! This undoes the memory optimization, use
         # with smaller replay buffers only.
-        if observation is None:
+        if ob is None:
             return None
-            
-        return np.array(observation).astype(np.float32) / 255.0
+
+
+        return self.transform_observation(ob, self.env.observation_space)
 
 class RewardCollector(gym.Wrapper):
     def __init__(self, env):
