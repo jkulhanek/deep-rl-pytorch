@@ -74,8 +74,13 @@ class UnrealModelBase:
                 return [get_shape_rec(x) for x in shapes]
             else:
                 return shapes.size()
+        def extend_batch_dim(batch_shape, space):
+            if space.__class__.__name__ == 'Box':
+                return (batch_shape,) + space.shape
+            elif space.__class__.__name__ == 'Tuple':
+                return tuple([extend_batch_dim(batch_shape, x) for x in space.spaces])
 
-        shapes = (batch_shape + self.env.observation_space.shape, batch_shape, get_shape_rec(self._initial_states(self.num_processes)))
+        shapes = (extend_batch_dim(batch_shape, self.env.observation_space), batch_shape, get_shape_rec(self._initial_states(self.num_processes)))
         minimal_summary(model, shapes)
 
     def _loss_a2c(self, model, a2c_batch):
