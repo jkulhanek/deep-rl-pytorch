@@ -271,7 +271,7 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
             self.log_dir.cleanup()
 
     def create_model(self):
-        return UnrealModel(self.env.observation_space.shape[0], self.env.action_space.n)
+        return UnrealModel(self.env.observation_space.spaces[0].shape[0], self.env.action_space.n)
 
     def create_env(self, env):
         from .env import create_env
