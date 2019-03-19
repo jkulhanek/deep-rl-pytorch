@@ -52,7 +52,8 @@ class UnrealModel(nn.Module):
 
         self._create_pixel_control_network(num_outputs)
         self._create_rp_network()
-
+        
+        self.pc_cell_size = 4
         self.apply(self.init_weights)
 
     def initial_states(self, batch_size):

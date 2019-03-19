@@ -78,6 +78,7 @@ def test_trainer(trainer):
 
             t = t.trainer
         trainer.unwrapped.allow_gpu = False
+        trainer.unwrapped.replay_size = 50
 
         process_base = trainer.process
         def process(*args, **kwargs):

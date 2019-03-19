@@ -12,8 +12,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from ..core import AbstractTrainer, SingleTrainer, AbstractAgent
-from ..common.env import RewardCollector, TransposeImage, ScaledFloatFrame
-from ..common.vec_env import DummyVecEnv, SubprocVecEnv
 from ..common import MetricContext
 from ..common.torchsummary import minimal_summary
 from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
@@ -21,7 +19,7 @@ from ..a2c.storage import RolloutStorage
 from ..a2c.a2c import get_batch_size, expand_time_dimension
 from ..common.schedules import LinearSchedule
 
-from .util import pixel_control_loss, value_loss, reward_prediction_loss, UnrealEnvBaseWrapper
+from .util import pixel_control_loss, value_loss, reward_prediction_loss
 from .storage import BatchExperienceReplay
 from .model import UnrealModel
 
@@ -98,13 +96,17 @@ class UnrealModelBase:
         
         return loss, action_loss.detach(), value_loss.detach(), dist_entropy.detach()
 
+    def _get_input_for_pixel_control(self, inputs):
+        return inputs[0]
+
     def _loss_pixel_control(self, model, batch, device):
         observations, actions, rewards, terminals = batch
         masks = torch.ones(rewards.size(), dtype = torch.float32, device = device)
         initial_states = to_tensor(self._initial_states(masks.size()[0]), device)
         predictions, _ = model.pixel_control(observations, masks, initial_states)
         predictions[:, -1].mul_(1.0 - terminals[:, -2].view(*terminals[:, -2].size(), 1, 1, 1))
-        return pixel_control_loss(observations[0], actions[:, :-1], predictions, self.pc_gamma)
+        pure_observations = self._get_input_for_pixel_control(observations)
+        return pixel_control_loss(pure_observations, actions[:, :-1], predictions, self.pc_gamma, cell_size=model.pc_cell_size)
 
     def _loss_value_replay(self, model, batch, device):
         observations, actions, rewards, terminals = batch
@@ -267,16 +269,8 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         return UnrealModel(self.env.observation_space.shape[0], self.env.action_space.n)
 
     def create_env(self, env):
-        def thunk(env):
-            env = gym.make(**env)
-            env = RewardCollector(env)
-            env = TransposeImage(env)
-            env = ScaledFloatFrame(env)
-            env = UnrealEnvBaseWrapper(env)
-            return env
-        
-        self.validation_env = DummyVecEnv([lambda: thunk(env)])
-        env = SubprocVecEnv([lambda: thunk(env) for _ in range(self.num_processes)])
+        from .env import create_env
+        env, self.validation_env = create_env(self.num_processes, env)
         return env    
 
     def process(self, context, mode = 'train', **kwargs):
