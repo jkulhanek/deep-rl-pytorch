@@ -257,9 +257,9 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
 
     def _initialize(self, **model_kwargs):
         model = super()._build_graph(self.allow_gpu, **model_kwargs)
-        self._tstart = time.time()
         self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(self.num_processes))
         self.replay = BatchExperienceReplay(self.num_processes, self.replay_size, self.num_steps)
+        self._tstart = time.time()
         return model
 
     def save(self, path):
