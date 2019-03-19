@@ -35,27 +35,32 @@ class TestingVecEnv(VecEnv):
     def step_wait(self):
         return self._sample(), np.zeros((self.num_envs,), dtype = np.float32), np.zeros((self.num_envs,), dtype = np.bool), [dict() for _ in range(self.num_envs)]
 
+def fake_env(env):
+    if hasattr(env, 'step_wait'):
+        if hasattr(env, 'venv'):
+            original = env.venv
+            child = fake_env(original)
+            env.venv = child
+            return env, original
+        else:
+            return TestingVecEnv(env.num_envs, env.observation_space, env.action_space), env
+
+    else:
+        if hasattr(env, 'env'):
+            original = env.env
+            child = fake_env(original)
+            env.env = child
+            return env, original
+        else:
+            return TestingEnv(env.observation_space, env.action_space), env
+
+
 def test_trainer(trainer):
     create_env = trainer.unwrapped.create_env
     def wrap_env(env):
-        if hasattr(env, 'step_wait'):
-            # Vector environment
-            parent = env
-            while hasattr(env, 'venv'):
-                parent = env
-                env = env.venv
-
-            parent.venv = TestingVecEnv(env.num_envs, env.observation_space, env.action_space)
-
-        else:
-            parent = env
-            while hasattr(env, 'env'):
-                parent = env
-                env = env.env
-
-            parent.env = TestingEnv(env.observation_space, env.action_space)
+        env, original = fake_env(env)
+        print('Faked environment: %s' % original.__class__.__name__)
         return env
-
 
     def _create_env(*args, **kwargs):
         env = create_env(*args, **kwargs)

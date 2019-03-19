@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import gym
+import gym.spaces
 import numpy as np
 
 
@@ -95,6 +96,10 @@ class UnrealEnvBaseWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
         self.last_action_reward = None
+        self.observation_space = gym.spaces.Tuple((
+            env.observation_space,
+            gym.spaces.Box(0.0, 1.0, (env.action_space.n + 1,), dtype = np.float32)
+        ))
 
     def reset(self):
         self.last_action_reward = np.zeros(self.action_space.n + 1, dtype = np.float32)
