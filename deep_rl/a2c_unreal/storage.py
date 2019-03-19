@@ -17,13 +17,20 @@ class ExperienceReplay(SequenceStorage):
     def sample_sequence(self):
         return self.sample(0)
 
-    def sample_rp_sequence(self):
-        if np.random.randint(2) == 0:
-            from_zero = True
-        else:
-            from_zero = False
+    def _choose_rp_sequencer(self):
+        if self.count(1) < self.samplers[1].sequence_length:
+            return 2
 
-        return self.sample(1 if from_zero else 2)
+        if self.count(2) < self.samplers[2].sequence_length:
+            return 1
+
+        if np.random.randint(2) == 0:
+            return 1 # from zero 1/3 probability
+        else:
+            return 2
+
+    def sample_rp_sequence(self):
+        return self.sample(self._choose_rp_sequencer())
 
 class BatchExperienceReplay(BatchSequenceStorage):
     def __init__(self, num_processes, size, sequence_length):
@@ -32,8 +39,16 @@ class BatchExperienceReplay(BatchSequenceStorage):
     def sample_sequence(self):
         return self.sample(0)
 
+    def _num_rp_zeros(self):
+        fromzeros = np.random.binomial(len(self.storages), 0.3333) # Probability of selecting zero sequence 
+        zeroenvs = sum(self.counts(1))
+        nonzeroenvs = sum(self.counts(2))
+        fromzeros = min(fromzeros, zeroenvs)
+        fromzeros = max(fromzeros, len(self.storages) - nonzeroenvs)
+        return fromzeros
+
     def sample_rp_sequence(self):
-        fromzeros = np.random.binomial(len(self.storages), 0.3333) # Probability of selecting zero sequence        
+        fromzeros = self._num_rp_zeros()            
         sampler1_batch = self.sample(1, batch_size = fromzeros)
         sampler2_batch = self.sample(2, len(self.storages) - fromzeros)
         return merge_batches(sampler1_batch, sampler2_batch)

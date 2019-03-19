@@ -150,6 +150,9 @@ class SequenceStorage:
         if terminal:
             self.episode_length = 0
 
+    def count(self, sampler):
+        return self.selector_lengths[sampler]
+
 
     def sample(self, sampler):
         result = None
@@ -172,6 +175,7 @@ class SequenceStorage:
 
 class BatchSequenceStorage:
     def __init__(self, num_storages, single_size, samplers = []):
+        self.samplers = samplers
         self.storages = [SequenceStorage(single_size, samplers=samplers) for _ in range(num_storages)]
 
     def insert(self, observations, actions, rewards, terminals):
@@ -183,6 +187,9 @@ class BatchSequenceStorage:
     @property
     def full(self):
         return all([x.full for x in self.storages])
+
+    def counts(self, sequencer):
+        return [x.count(sequencer) for x in self.storages]
 
     def sample(self, sampler, batch_size = None):
         if batch_size is None:
