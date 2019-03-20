@@ -134,6 +134,7 @@ class TransposeObs(gym.ObservationWrapper):
         super(TransposeObs, self).__init__(env)
 
 
+
 class TransposeImage(TransposeObs):
     def __init__(self, env=None, op=[2, 0, 1]):
         """
@@ -143,14 +144,25 @@ class TransposeImage(TransposeObs):
         assert len(op) == 3, "Error: Operation, %s, must be dim3" % str(op)
         self.op = op
         obs_shape = self.observation_space.shape
-        self.observation_space = Box(
-            self.observation_space.low[0, 0, 0],
-            self.observation_space.high[0, 0, 0],
-            [
-                obs_shape[self.op[0]],
-                obs_shape[self.op[1]],
-                obs_shape[self.op[2]]],
-            dtype=self.observation_space.dtype)
+        self.observation_space = self.transpose_space(self.observation_space)
+
+    def transpose_space(self, space):
+        if space.__class__.__name__ == 'Box':
+            if len(space.shape) == 3:
+                obs_shape = space.shape
+                return Box(
+                    space.low[0, 0, 0],
+                    space.high[0, 0, 0],
+                    [
+                        obs_shape[self.op[0]],
+                        obs_shape[self.op[1]],
+                        obs_shape[self.op[2]]],
+                    dtype=space.dtype)
+            return space
+        elif space.__class__.__name__ == 'Tuple':
+            return gym.spaces.Tuple(tuple(map(self.transpose_space, space.spaces)))
+        else:
+            raise Exception('Environment type is not supported')
 
     def transpose_observation(self, ob, space):
         if space.__class__.__name__ == 'Box':
@@ -209,11 +221,20 @@ class VecNormalize(VecNormalize_):
         self.training = False
 
 
-
 class ScaledFloatFrame(gym.ObservationWrapper):
     def __init__(self, env):
         gym.ObservationWrapper.__init__(self, env)
-        self.observation_space = gym.spaces.Box(low=0, high=1, shape=env.observation_space.shape, dtype=np.float32)
+        self.observation_space = self.transform_space(env.observation_space)
+
+    def transform_space(self, space):
+        if space.__class__.__name__ == 'Box':
+            if len(space.shape) == 3 and space.dtype == np.uint8:
+                return gym.spaces.Box(low=0.0, high=1.0, shape = space.shape, dtype = np.float32)
+            return space
+        elif space.__class__.__name__ == 'Tuple':
+            return gym.spaces.Tuple(tuple(map(self.transform_space, space.spaces)))
+        else:
+            raise Exception('Environment type is not supported')
 
     def transform_observation(self, ob, space):
         if space.__class__.__name__ == 'Box':
@@ -233,6 +254,7 @@ class ScaledFloatFrame(gym.ObservationWrapper):
 
 
         return self.transform_observation(ob, self.env.observation_space)
+
 
 class RewardCollector(gym.Wrapper):
     def __init__(self, env):

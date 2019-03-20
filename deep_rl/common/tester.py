@@ -2,6 +2,7 @@ import gym
 import numpy as np
 from .vec_env import VecEnv, flatten_observations
 import tempfile
+from .torchsummary import get_shape
 
 class TestingEnv(gym.Env):
     def __init__(self, observation_space, action_space):
@@ -55,6 +56,15 @@ def fake_env(env):
             return TestingEnv(env.observation_space, env.action_space), env
 
 
+def get_space_shape(space):
+    if space.__class__.__name__ == 'Box':
+        return space.shape
+
+    if space.__class__.__name__ == 'Tuple':
+        return tuple(map(get_space_shape, space.spaces))
+
+    raise Exception('Environment type not supported')
+
 def test_trainer(trainer):
     create_env = trainer.unwrapped.create_env
     def wrap_env(env):
@@ -67,7 +77,9 @@ def test_trainer(trainer):
         if hasattr(trainer.unwrapped, 'validation_env'):
             trainer.unwrapped.validation_env = wrap_env(trainer.unwrapped.validation_env)
 
-        return wrap_env(env)
+        env = wrap_env(env)
+        print('Environment shape is %s' % str(get_space_shape(env.observation_space)))
+        return env
 
     assert trainer.__class__.__name__ == 'CompiledTrainer'
     with tempfile.TemporaryDirectory() as tmpdir:

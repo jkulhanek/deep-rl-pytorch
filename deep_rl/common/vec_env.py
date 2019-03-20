@@ -41,11 +41,11 @@ def flatten_observations(obs):
 
     if isinstance(obs[0], dict):
         keys = obs[0].keys()
-        return {k: np.stack([o[k] for o in obs]) for k in keys}
+        return {k: flatten_observations([o[k] for o in obs]) for k in keys}
     elif isinstance(obs[0], list):
-        return [np.stack([o[i] for o in obs]) for i in len(obs[0])]
+        return [flatten_observations([o[i] for o in obs]) for i in len(obs[0])]
     elif isinstance(obs[0], tuple):
-        return tuple([np.stack([o[i] for o in obs]) for i in range(len(obs[0]))])
+        return tuple([flatten_observations([o[i] for o in obs]) for i in range(len(obs[0]))])
     else:
         return np.stack(obs)
 
