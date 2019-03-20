@@ -8,8 +8,13 @@ from .util import DefaultOrderedDict
 from .console_util import print_table
 
 class SaveWrapper(AbstractTrainerWrapper):
-    def __init__(self, *args, model_root_directory = './checkpoints', saving_period = 10000, **kwargs):
+    def __init__(self, *args, model_root_directory = None, saving_period = 10000, **kwargs):
         super().__init__(*args, **kwargs)
+
+        if model_root_directory is None:
+            from ..configuration import configuration
+            model_root_directory = configuration.get('models_path')
+
         self.model_root_directory = model_root_directory
         self._last_save = 0
         self.saving_period = saving_period

@@ -204,8 +204,12 @@ class DeepQTrainer(SingleTrainer):
         return (1, episode_end, stats)
 
 class DeepQAgent(AbstractAgent):
-    def __init__(self, checkpoint_dir = './checkpoints', name = 'deepq'):
+    def __init__(self, checkpoint_dir = None, name = 'deepq'):
         super().__init__(name)
+
+        if checkpoint_dir is None:
+            from ..configuration import configuration
+            checkpoint_dir = configuration.get('models_path')
 
         self._load(checkpoint_dir)
 

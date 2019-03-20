@@ -18,6 +18,7 @@ from ..common.torchsummary import minimal_summary
 from .model import TimeDistributedConv
 from .storage import RolloutStorage
 from .core import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
+from ..configuration import configuration
 
 def get_batch_size(inputs):
     if isinstance(inputs, (list, tuple)):
@@ -274,7 +275,9 @@ class A2CAgent(AbstractAgent):
         pass
 
     def _initialize(self):
-        path = os.path.join('./checkpoints', self.name, 'weights.pth')
+        checkpoint_dir = configuration.get('models_path')
+
+        path = os.path.join(checkpoint_dir, self.name, 'weights.pth')
         model = self.create_model()
         model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
 

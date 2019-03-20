@@ -119,6 +119,7 @@ configuration = wrap_config(store)
 
 # Apply default configuration
 configuration.update(dict(
+    models_path = './checkpoints'
 ))
 
 
