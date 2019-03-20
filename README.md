@@ -1,4 +1,6 @@
 # Deep RL PyTorch
+[![https://www.singularity-hub.org/static/img/hosted-singularity--hub-%23e32929.svg](https://www.singularity-hub.org/static/img/hosted-singularity--hub-%23e32929.svg)](https://singularity-hub.org/collections/2581)
+
 This repo contains implementation of popular Deep RL algorithms. Furthermore it contains unified interface for training and evaluation with unified model saving and visualization. It can be used as a good starting point when implementing new RL algorithm in PyTorch.
 
 ## Getting started
