@@ -11,7 +11,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from ..core import AbstractTrainer, SingleTrainer, AbstractAgent
-from ..common.env import VecTransposeImage, make_vec_envs
 from ..common import MetricContext
 from ..common.torchsummary import minimal_summary
 

@@ -8,9 +8,7 @@ from copy import copy
 
 from baselines import bench
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
-from baselines.common.vec_env import VecEnvWrapper
-from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
-from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
+from .vec_env import VecEnvWrapper, SubprocVecEnv, DummyVecEnv
 from baselines.common.vec_env.vec_normalize import VecNormalize as VecNormalize_
 from baselines.common.vec_env.vec_frame_stack import VecFrameStack
 

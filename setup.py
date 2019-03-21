@@ -9,7 +9,7 @@ setup(
     license='MIT License',
     long_description=open('README.md').read(),
     install_requires = [
-        'baselines @ git+https://github.com/openai/baselines.git',
+        #'baselines @ git+https://github.com/openai/baselines.git',
         'gym'
     ]
 )

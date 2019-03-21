@@ -1,7 +1,6 @@
 from abc import abstractclassmethod
 import tempfile
 
-from ..common.env import make_vec_envs, VecTransposeImage
 from ..common.multiprocessing import ProcessServerTrainer
 from .trainer import A3CWorker
 from ..common.util import serialize_function
