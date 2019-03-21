@@ -168,7 +168,7 @@ class TransposeImage(TransposeObs):
                 return ob if ob is None else np.transpose(ob, axes = self.op)
             return ob
         elif space.__class__.__name__ == 'Tuple':
-            return tuple(map(self.transpose_observation, zip(ob, space.spaces)))
+            return tuple(map(lambda x: self.transpose_observation(*x), zip(ob, space.spaces)))
         else:
             raise Exception('Environment type is not supported')
 
@@ -240,7 +240,7 @@ class ScaledFloatFrame(gym.ObservationWrapper):
                 return ob if ob is None else np.array(ob).astype(np.float32) / 255.0
             return ob
         elif space.__class__.__name__ == 'Tuple':
-            return tuple(map(self.transform_observation, zip(ob, space.spaces)))
+            return tuple(map(lambda x: self.transform_observation(*x), zip(ob, space.spaces)))
         else:
             raise Exception('Environment type is not supported')
 
