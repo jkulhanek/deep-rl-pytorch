@@ -40,6 +40,8 @@ def to_numpy(tensor):
         return tuple(to_numpy(list(tensor)))
     elif isinstance(tensor, list):
         return [to_numpy(x) for x in tensor]
+    elif isinstance(tensor, dict):
+        return { key: to_numpy(value) for key, value in tensor.items()}
     elif isinstance(tensor, np.ndarray):
         return tensor
     elif torch.is_tensor(tensor):
