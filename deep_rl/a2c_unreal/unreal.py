@@ -127,11 +127,38 @@ class UnrealModelBase:
         predictions = model.reward_prediction(without_last_item(observations))
         return reward_prediction_loss(predictions, rewards[:, -1])
 
+    def compute_auxiliary_loss(self, model, batch, main_device):
+        loss = 0
+        pixel_control_batch = batch.get('pixel_control_batch')
+        value_replay_batch = batch.get('value_replay_batch')
+        reward_prediction_batch = batch.get('reward_prediction_batch')
+        losses = dict()
+        # Compute pixel change gradients
+        if not pixel_control_batch is None:
+            pixel_control_loss = self._loss_pixel_control(model, pixel_control_batch, main_device)
+            loss += (pixel_control_loss * self.pc_weight)
+            losses['pc_loss'] = pixel_control_loss.item()
+
+        # Compute value replay gradients
+        if not value_replay_batch is None:
+            value_replay_loss = self._loss_value_replay(model, value_replay_batch, main_device)
+            loss += (value_replay_loss * self.vr_weight)
+            losses['vr_loss'] = value_replay_loss.item()
+
+        # Compute reward prediction gradients
+        if not reward_prediction_batch is None:
+            reward_prediction_loss = self._loss_reward_prediction(model, reward_prediction_batch)
+            loss += (reward_prediction_loss * self.rp_weight)
+            losses['rp_loss'] = reward_prediction_loss.item()
+
+        return loss, losses
+
+
     def _build_train(self, model, main_device):
         optimizer = optim.RMSprop(model.parameters(), self.learning_rate, eps=self.rms_epsilon, alpha=self.rms_alpha)
 
         @pytorch_call(main_device)
-        def train(a2c_batch, pixel_control_batch = None, value_replay_batch = None, reward_prediction_batch = None):
+        def train(a2c_batch, **batch):
             # Update learning rate
             for param_group in optimizer.param_groups:
                 param_group['lr'] = self.learning_rate
@@ -148,31 +175,8 @@ class UnrealModelBase:
             # However, if your graph is small and fit the memory
             # You can accumulate loss and evaluate it after accumulating all
             action_loss, value_loss, dist_entropy = action_loss.item(), value_loss.item(), dist_entropy.item()
-
-
-            # Compute pixel change gradients
-            if not pixel_control_batch is None:
-                pixel_control_loss = self._loss_pixel_control(model, pixel_control_batch, main_device)
-                loss += (pixel_control_loss * self.pc_weight)
-                pixel_control_loss = pixel_control_loss.item()
-            else:
-                pixel_control_loss = None
-
-            # Compute value replay gradients
-            if not value_replay_batch is None:
-                value_replay_loss = self._loss_value_replay(model, value_replay_batch, main_device)
-                loss += (value_replay_loss * self.vr_weight)
-                value_replay_loss = value_replay_loss.item()
-            else:
-                value_replay_loss = None
-
-            # Compute reward prediction gradients
-            if not reward_prediction_batch is None:
-                reward_prediction_loss = self._loss_reward_prediction(model, reward_prediction_batch)
-                loss += (reward_prediction_loss * self.rp_weight)
-                reward_prediction_loss = reward_prediction_loss.item()
-            else:
-                reward_prediction_loss = None
+            auxiliary_loss, losses = self.compute_auxiliary_loss(model, batch, main_device)
+            loss += auxiliary_loss
 
             # Optimize
             loss.backward()
@@ -180,7 +184,7 @@ class UnrealModelBase:
             optimizer.step()
 
             loss = loss.item()
-            return loss, action_loss, value_loss, dist_entropy, pixel_control_loss, value_replay_loss, reward_prediction_loss
+            return loss, action_loss, value_loss, dist_entropy, losses
 
         return train
 
@@ -338,19 +342,24 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         # Prepare next batch starting point
         return batched, (len(finished_episodes[0]),) + finished_episodes
 
-
-    def _process_train(self, context, metric_context):
-        batch, report = self._sample_experience_batch()
+    def sample_training_batch(self):
+        a2c_batch, report = self._sample_experience_batch()
 
         # Add auxiliary batches
         pc_batch = self.replay.sample_sequence() if self.pc_weight > 0.0 else None
         vr_batch = self.replay.sample_sequence() if self.vr_weight > 0.0 else None
         rp_batch = self.replay.sample_rp_sequence() if self.rp_weight > 0.0 else None
+        return dict(
+            a2c_batch = a2c_batch,
+            pixel_control_batch = pc_batch,
+            value_replay_batch = vr_batch,
+            reward_prediction_batch = rp_batch
+        ), report
 
-        loss, value_loss, action_loss, dist_entropy, pc_loss, vr_loss, rp_loss = self._train(batch, 
-            pixel_control_batch = pc_batch, 
-            value_replay_batch = vr_batch, 
-            reward_prediction_batch = rp_batch)
+
+    def _process_train(self, context, metric_context):
+        batch, report = self.sample_training_batch()
+        loss, value_loss, action_loss, dist_entropy, losses = self._train(**batch)
 
         fps = int(self._global_t/ (time.time() - self._tstart))
         metric_context.add_cummulative('updates', 1)
@@ -359,11 +368,7 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         metric_context.add_scalar('action_loss', action_loss)
         metric_context.add_scalar('entropy', dist_entropy)
         metric_context.add_last_value_scalar('fps', fps)
-        if pc_loss is not None:
-            metric_context.add_scalar('pc_loss', pc_loss)
-        if vr_loss is not None:
-            metric_context.add_scalar('vr_loss', vr_loss)
-        if rp_loss is not None:
-            metric_context.add_scalar('rp_loss', rp_loss)        
+        for key, value in losses.items():
+            metric_context.add_scalar(key, value)       
         
         return self.num_steps * self.num_processes, report, metric_context
