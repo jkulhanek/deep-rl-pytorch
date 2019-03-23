@@ -156,8 +156,9 @@ class A2CModel:
         return model
 
 class A2CTrainer(SingleTrainer, A2CModel):
-    def __init__(self, name, env_kwargs, model_kwargs, devices = [], **kwargs):
-        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
+    def __init__(self, name, env_kwargs, model_kwargs, max_time_steps, **kwargs):
+        super().__init__(max_time_steps = max_time_steps, env_kwargs = env_kwargs, model_kwargs = model_kwargs)
+        self.max_time_steps = max_time_steps
         self.name = name
         self.num_steps = 5
         self.num_processes = 16
