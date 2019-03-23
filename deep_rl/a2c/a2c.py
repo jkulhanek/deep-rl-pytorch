@@ -35,7 +35,7 @@ def expand_time_dimension(inputs):
         return inputs.view(batch_size, 1, *inputs.size()[1:])
 
 class A2CModel:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, max_time_steps, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.entropy_coefficient = 0.01
         self.value_coefficient = 0.5
