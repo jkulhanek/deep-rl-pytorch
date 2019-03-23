@@ -1,6 +1,5 @@
 Bootstrap: docker
 From: kulhanek/deep-rl-pytorch:latest
-
 %post
     mkdir /deep-rl-pytorch
     cd /deep-rl-pytorch
@@ -11,3 +10,5 @@ From: kulhanek/deep-rl-pytorch:latest
 
 %runscript
     echo "Container is ready!"
+    echo "Launching experiment with arguments [$@]"
+    exec python3 "/experiment/$@"
