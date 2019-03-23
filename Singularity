@@ -6,9 +6,8 @@ From: kulhanek/deep-rl-pytorch:latest
     git init
     git remote add origin https://github.com/jkulhanek/deep-rl-pytorch.git
     git pull origin master
-    pip3 install .
 
 %runscript
     echo "Container is ready!"
     echo "Launching experiment with arguments [$@]"
-    exec python3 "/experiment/$@"
+    exec python3 "/deep-rl-pytorch/$@"
