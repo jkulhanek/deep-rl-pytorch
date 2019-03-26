@@ -251,6 +251,9 @@ def worker(remote, parent_remote, env_fn_wrapper):
             elif cmd == 'close':
                 remote.close()
                 break
+            elif cmd == 'call_unwrapped':
+                name, args, kwargs = data
+                remote.send(getattr(env.unwrapped, name)(*args, **kwargs))
             elif cmd == 'get_spaces_spec':
                 remote.send((env.observation_space, env.action_space, env.spec))
             else:
@@ -333,6 +336,12 @@ class SubprocVecEnv(VecEnv):
         for p in self.ps:
             p.join()
 
+    def call_unwrapped(name, *args, **kwargs):
+        for remote in self.remotes:
+            remote.send(('call_unwrapped', (name, args, kwargs)))
+
+        return [remote.recv() for remote in self.remotes]
+
     def get_images(self):
         self._assert_not_closed()
         for pipe in self.remotes:
@@ -404,6 +413,13 @@ class DummyVecEnv(VecEnv):
 
     def get_images(self):
         return [env.render(mode='rgb_array') for env in self.envs]
+
+    def call_unwrapped(name, *args, **kwargs):
+        results = []
+        for env in self.envs:
+            results.append(getattr(env, name)(*args, **kwargs))
+
+        return results
 
     def render(self, mode='human'):
         if self.num_envs == 1:
