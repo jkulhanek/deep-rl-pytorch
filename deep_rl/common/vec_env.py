@@ -336,7 +336,7 @@ class SubprocVecEnv(VecEnv):
         for p in self.ps:
             p.join()
 
-    def call_unwrapped(name, *args, **kwargs):
+    def call_unwrapped(self, name, *args, **kwargs):
         for remote in self.remotes:
             remote.send(('call_unwrapped', (name, args, kwargs)))
 
@@ -414,10 +414,10 @@ class DummyVecEnv(VecEnv):
     def get_images(self):
         return [env.render(mode='rgb_array') for env in self.envs]
 
-    def call_unwrapped(name, *args, **kwargs):
+    def call_unwrapped(self, name, *args, **kwargs):
         results = []
         for env in self.envs:
-            results.append(getattr(env, name)(*args, **kwargs))
+            results.append(getattr(env.unwrapped, name)(*args, **kwargs))
 
         return results
 
