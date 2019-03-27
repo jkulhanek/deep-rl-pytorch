@@ -34,9 +34,11 @@ class Model(nn.Module):
 class Trainer(A3CTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.num_processes = 16
-        self.num_steps = 5
+        self.num_processes = 4
+        self.num_steps = 20
         self.gamma = .99
+
+        self.allow_gpu = False
 
     def create_env(self, env):
         class W(gym.ObservationWrapper):
@@ -45,7 +47,7 @@ class Trainer(A3CTrainer):
 
         env = gym.make(**env)
         env = RewardCollector(env)
-        env = ClipRewardEnv(env)
+        #env = ClipRewardEnv(env)
         env = W(env)
         return env
 

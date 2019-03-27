@@ -50,16 +50,6 @@ class A3CWorker:
         self.num_steps = 5
         self.gamma = 0.99
 
-    def run(self, process, **kwargs):
-        self._global_t = 0
-        self._is_stopped = False
-        while not self._is_stopped:
-            tdiff, _, _ = process(mode = 'train', context = dict())
-            self._global_t += tdiff
-
-        return None
-
-
     def initialize(self):
         self.env = self.create_env()
         self.model = self.create_model_fn(self)()
@@ -70,6 +60,8 @@ class A3CWorker:
         metric_context = MetricContext()
         if mode == 'train':
             return self._process_train(context, metric_context)
+        if mode == 'validation':
+            return self._process_validation(context, metric_context)
         else:
             raise Exception('Mode not supported')
 
@@ -118,6 +110,11 @@ class A3CWorker:
         metric_context.add_scalar('entropy', dist_entropy)
         return self.num_steps, report, metric_context
 
+    def _process_validation(self, context, metric_context):
+        self.model.load_state_dict(self.shared_model.state_dict())
+        batch, report = self._sample_experience_batch()
+        return self.num_steps, report, metric_context
+
     def _build_graph(self):
         model = self.model
         if hasattr(model, 'initial_states'):
@@ -125,7 +122,7 @@ class A3CWorker:
         else:
             self._initial_states = lambda _: []
 
-        main_device = torch.device('cpu')
+        main_device = torch.device('cpu') # TODO: add GPU support
         model.train()
 
         # Build train and act functions

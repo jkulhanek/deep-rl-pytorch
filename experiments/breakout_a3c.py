@@ -54,7 +54,7 @@ class Trainer(A3CTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_processes = 16
-        self.num_steps = 5
+        self.num_steps = 20
         self.gamma = .99
 
     def create_env(self, env):

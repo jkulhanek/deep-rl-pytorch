@@ -11,14 +11,16 @@ class A3CTrainer(ProcessServerTrainer):
         super().__init__(*args, **kwargs)
         
         self.gamma = 0.99
-        self.num_steps = 5
+        self.num_steps = 20
         self.entropy_coefficient = 0.01
         self.value_coefficient = 0.5
-        self.max_gradient_norm = 0.5
-        self.learning_rate = 7e-4
+        self.max_gradient_norm = 40.0
+        self.learning_rate = 0.0001
         self.rms_alpha = 0.99
         self.rms_epsilon = 1e-5
         self.log_dir = None
+
+        self.allow_gpu = True
 
     @abstractclassmethod
     def create_model(self, **model_kwargs):
@@ -41,4 +43,5 @@ class A3CTrainer(ProcessServerTrainer):
         worker.entropy_coefficient = self.entropy_coefficient
         worker.value_coefficient = self.value_coefficient
         worker.max_gradient_norm = self.max_gradient_norm
+        worker.allow_gpu = self.allow_gpu
         return worker
