@@ -1,6 +1,7 @@
 Bootstrap: docker
 From: kulhanek/deep-rl-pytorch:latest
 
+
 %post
     mkdir /deep-rl-pytorch
     cd /deep-rl-pytorch
