@@ -16,7 +16,7 @@ from ..common import MetricContext
 from ..common.torchsummary import minimal_summary
 from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 from ..a2c.storage import RolloutStorage
-from ..a2c.a2c import get_batch_size, expand_time_dimension
+from ..a2c.a2c import get_batch_size, expand_time_dimension, A2CAgent
 from ..common.schedules import LinearSchedule
 
 from .util import pixel_control_loss, value_loss, reward_prediction_loss
@@ -372,3 +372,11 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
             metric_context.add_scalar(key, value)       
         
         return self.num_steps * self.num_processes, report, metric_context
+
+
+class UnrealAgent(A2CAgent):   
+    def wrap_env(self, env):
+        from .env import UnrealEnvBaseWrapper
+        env = super().wrap_env(env)
+        env = UnrealEnvBaseWrapper(env)
+        return env

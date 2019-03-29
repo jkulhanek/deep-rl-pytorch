@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+from .env import wrap_agent_env
 from ..core import AbstractTrainer, SingleTrainer, AbstractAgent
 from ..common.env import VecTransposeImage, make_vec_envs
 from ..common import MetricContext
@@ -33,6 +34,14 @@ def expand_time_dimension(inputs):
     else:
         batch_size = inputs.size()[0]
         return inputs.view(batch_size, 1, *inputs.size()[1:])
+
+def expand_time_and_batch_dimensions(inputs):
+    if isinstance(inputs, list):
+        return [expand_time_and_batch_dimensions(x) for x in inputs]
+    elif isinstance(inputs, tuple):
+        return tuple(expand_time_and_batch_dimensions(list(inputs)))
+    else:
+        return inputs.unsqueeze(0).unsqueeze(0)
 
 class A2CModel:
     def __init__(self, max_time_steps, *args, **kwargs):
@@ -281,30 +290,32 @@ class A2CAgent(AbstractAgent):
         path = os.path.join(checkpoint_dir, self.name, 'weights.pth')
         model = self.create_model()
         model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+        model.eval()
 
-        def step(observation, states = None):
-            with torch.no_grad:
-                observation = torch.from_numpy(observation)
-                if states is None and hasattr(model, 'initial_states'):
-                    states = getattr(model, 'initial_states')(1)
-                elif states is None:
-                    states = []
+        @pytorch_call(torch.device('cpu'))
+        def step(observations, states):
+            with torch.no_grad():
+                batch_size = get_batch_size(observations)
+                observations = expand_time_and_batch_dimensions(observations)
+                masks = torch.ones((1, 1), dtype = torch.float32)
 
-                observations = observation.unsqueeze(0).unsqueeze(0)
-                masks = torch.ones([1, 1], dtype = torch.float32)
-                policy_logits, value, states = model(observations, masks, states)
+                policy_logits, _, states = model(observations, masks, states)
                 dist = torch.distributions.Categorical(logits = policy_logits)
                 action = dist.sample()
-                return action.squeeze().detach().item().numpy(), detach_all(states)
-
+                return action.item(), KeepTensor(detach_all(states))
 
         self._step = step
         return model
 
+    def wrap_env(self, env):
+        def _thunk():
+            return env
+
+        return wrap_agent_env(_thunk)()
 
     def reset_state(self):
         self.states = None
 
-    def act(state):
+    def act(self, state):
         action, self.states = self._step(state, self.states)
         return action
