@@ -275,7 +275,7 @@ class A2CTrainer(SingleTrainer, A2CModel):
 
 class A2CAgent(AbstractAgent):
     def __init__(self, *args, **kwargs):
-        self.__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.model = self._initialize()
         self.states = None
