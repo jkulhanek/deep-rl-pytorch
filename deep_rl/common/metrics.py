@@ -229,7 +229,7 @@ class MetricWriter:
                 elif callable(handler):
                     handler = handler()
                 
-                self.handlers.append([])
+                self.handlers.append(handler)
 
         if logdir is not None and len(logdir) > 0:
             if not os.path.exists(logdir):
