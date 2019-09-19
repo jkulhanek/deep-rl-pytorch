@@ -16,7 +16,7 @@ class MetricHandlerBase:
 
 PLOT_METRICS = ['reward', 'episode_length']
 class MatplotlibHandler(MetricHandlerBase):
-    def __init__(self, interactive = True, *args, **kwargs):
+    def __init__(self, interactive = False, *args, **kwargs):
         super().__init__('matplotlib', *args, **kwargs)
         self._metrics = defaultdict(lambda: ([], []))
         self._validation_metrics = defaultdict(lambda: ([], []))
@@ -182,6 +182,11 @@ def load_metrics(file):
         metrics[name][1].extend(values)
     return metrics
 
+ALIASES = {
+    "matplotlib": "deep_rl.common.metrics;MatplotlibHandler",
+    "file": "deep_rl.common.metrics;DataHandler",
+}  
+
 class MetricWriter:
     class _MetricRecordFactory:
         def __init__(self, time, flush, mode):
@@ -202,15 +207,29 @@ class MetricWriter:
     def __init__(self, use_tensorboard = False, session_name = 'main', logdir = './logs'):
         self._use_tensorboard = use_tensorboard
         self._logdir = logdir
-        self.visdom = create_visdom(session_name, configuration.visdom)
 
-        if self.visdom is not None:
-            self.handlers = [VisdomHandler(self.visdom), MatplotlibHandler(interactive=False)]
+        handlers = configuration.get("logging.handlers")
+        if handlers is None:
+            self.visdom = create_visdom(session_name, configuration.visdom)
+            if self.visdom is not None:
+                self.handlers = [VisdomHandler(self.visdom), MatplotlibHandler(interactive=False)]
+            else:
+                self.handlers = [MatplotlibHandler()]
+            self.handlers.append(DataHandler())
         else:
-            self.handlers = [MatplotlibHandler()]
-
-        self.handlers.append(DataHandler())
-        self.handlers.append(ConsoleHandler())
+            self.handlers = []
+            import importlib
+            for handler in handlers:
+                if isinstance(handler, str):
+                    if handler in ALIASES:
+                        handler = ALIASES[handler]
+                    handler = handler.split(";")                
+                    pkg = importlib.import_module(handler[0])
+                    handler = getattr(pkg, handler[1])()
+                elif callable(handler):
+                    handler = handler()
+                
+                self.handlers.append([])
 
         if logdir is not None and len(logdir) > 0:
             if not os.path.exists(logdir):
