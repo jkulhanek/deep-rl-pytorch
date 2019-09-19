@@ -146,6 +146,22 @@ class DataHandler(MetricHandlerBase):
         self._was_initialized = True
         self._metrics = defaultdict(lambda: ([], []))
 
+
+class ConsoleHandler(MetricHandlerBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__('data', *args, **kwargs)
+        self._was_initialized = False
+
+    def collect(self, collection, time, mode = 'train'):
+        for (tag, val) in collection:
+            if mode != 'train':
+                tag = mode + '_' + tag
+
+            print("=============================================")
+            print("time: %s" % time)
+            print("\n".join(["%s: %s" % (tag, val) for (tag, val) in collection]))
+            print("=============================================")
+
 def create_visdom(session_name, configuration):
     if configuration is None or configuration.server is None:
         return None
@@ -194,6 +210,7 @@ class MetricWriter:
             self.handlers = [MatplotlibHandler()]
 
         self.handlers.append(DataHandler())
+        self.handlers.append(ConsoleHandler())
 
         if logdir is not None and len(logdir) > 0:
             if not os.path.exists(logdir):
