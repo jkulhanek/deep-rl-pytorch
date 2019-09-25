@@ -33,9 +33,11 @@ def _merge_batches(batches, axis):
 
 def merge_batches(*batches, **kwargs):
     axis = kwargs.get('axis', 0)
-    batches = [x for x in batches if not isinstance(x, list) or len(x) != 0]
+    batches = [x for x in batches if not x is None and (not isinstance(x, list) or len(x) != 0)]
     if len(batches) == 1:
         return batches[0]
+    elif len(batches) == 0:
+        return None
 
     return _merge_batches(batches, axis)
         
@@ -199,6 +201,10 @@ class BatchSequenceStorage:
             return []
 
         probs = np.array([x.selector_lengths[sampler] for x in self.storages], dtype = np.float32)
+        if np.sum(probs) == 0:
+            print("WARNING: Could not sample data from storage")
+            return None
+
         probs = probs / np.sum(probs)
         selected_sources = np.random.choice(np.arange(len(self.storages)), size=(batch_size,), p = probs)
 
