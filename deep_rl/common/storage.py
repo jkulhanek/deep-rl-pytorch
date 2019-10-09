@@ -165,6 +165,8 @@ class SequenceStorage:
                 index = np.random.choice(np.where(self.selector_data[:, sampler])[0])
                 result = sampler_obj.sample(lambda i: self[i], (index - self.tail) % self.size, len(self.storage))
                 trials -= 1
+                if result is not None:
+                    break
             except NewSelectionException:
                 pass
 
