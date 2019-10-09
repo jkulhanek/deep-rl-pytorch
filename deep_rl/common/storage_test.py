@@ -170,6 +170,19 @@ class SequenceStorageTest(unittest.TestCase):
         self.assertSetEqual(wasFirst, set([4]))
         self.assertSetEqual(wasSampled, set([7]))
 
+    def testPlusOneShortMemory(self):
+        import numpy
+        numpy.random.seed(1)
+
+        replay = ExperienceReplay(4, samplers = (PlusOneSampler(2),))
+
+        replay.insert(1, 0, 0.0, False)
+        replay.insert(2, 0, 0.0, True)
+
+        for _ in range(100):
+            batch = replay.sample(0)
+            self.assertIsNone(batch)
+
 class BatchSequenceStorageTest(unittest.TestCase):
     def testStore(self):
         replay = BatchSequenceStorage(2, 4, samplers = [SequenceSampler(2)])

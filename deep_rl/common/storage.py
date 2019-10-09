@@ -158,17 +158,16 @@ class SequenceStorage:
 
     def sample(self, sampler):
         result = None
-        trials = 10
-        while trials > 0 and result is None:
+        trials = 0
+        while trials < 10 and result is None:
             try:
                 sampler_obj = self.samplers[sampler]
                 index = np.random.choice(np.where(self.selector_data[:, sampler])[0])
                 result = sampler_obj.sample(lambda i: self[i], (index - self.tail) % self.size, len(self.storage))
-                trials -= 1
-                if result is not None:
-                    break
             except NewSelectionException:
                 pass
+        
+            trials += 1
 
         return result
 
