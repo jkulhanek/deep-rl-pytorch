@@ -159,7 +159,7 @@ class SequenceStorage:
     def sample(self, sampler):
         result = None
         trials = 0
-        while trials < 10 and result is None:
+        while trials < 200 and result is None:
             try:
                 sampler_obj = self.samplers[sampler]
                 index = np.random.choice(np.where(self.selector_data[:, sampler])[0])
