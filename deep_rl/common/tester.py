@@ -64,7 +64,7 @@ def get_space_shape(space):
 
     raise Exception('Environment type not supported')
 
-def test_trainer(trainer):
+def test_trainer(trainer, iterations = 30, allow_gpu = False):
     create_env = trainer.unwrapped.create_env
     def wrap_env(env):
         env, original = fake_env(env)
@@ -93,7 +93,9 @@ def test_trainer(trainer):
                 t.model_root_directory = tmpdir
 
             t = t.trainer
-        trainer.unwrapped.allow_gpu = False
+        if allow_gpu is not None:
+            trainer.unwrapped.allow_gpu = allow_gpu
+            
         trainer.unwrapped.replay_size = 50
 
         process_base = trainer.process
@@ -101,7 +103,7 @@ def test_trainer(trainer):
             res = process_base(*args, **kwargs)
             
             # Run 30 iterations of process
-            if trainer.unwrapped._global_t > 30:
+            if trainer.unwrapped._global_t > iterations:
                 raise TestFinished()
             return res
         trainer.process = process
