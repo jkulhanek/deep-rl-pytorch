@@ -13,7 +13,6 @@ class TestingEnv(gym.Env):
         return self.observation_space.sample()
 
     def step(self, action):
-        gym.spaces.Box().sample()
         return self.observation_space.sample(), 0.0, False, dict()
 
 class TestFinished(Exception):
@@ -40,7 +39,7 @@ def fake_env(env):
     if hasattr(env, 'step_wait'):
         if hasattr(env, 'venv'):
             original = env.venv
-            child = fake_env(original)
+            child, original = fake_env(original)
             env.venv = child
             return env, original
         else:
@@ -49,7 +48,7 @@ def fake_env(env):
     else:
         if hasattr(env, 'env'):
             original = env.env
-            child = fake_env(original)
+            child, original = fake_env(original)
             env.env = child
             return env, original
         else:
