@@ -211,7 +211,11 @@ class BatchSequenceStorage:
 
         sequences = []
         for source in selected_sources:
-            sequences.append(self.storages[source].sample(sampler))
+            sd = self.storages[source].sample(sampler)
+            if sd is None:
+                return None
+                
+            sequences.append(sd)
 
         return batch_items(sequences)
         

@@ -51,5 +51,9 @@ class BatchExperienceReplay(BatchSequenceStorage):
         fromzeros = self._num_rp_zeros()            
         sampler1_batch = self.sample(1, batch_size = fromzeros)
         sampler2_batch = self.sample(2, len(self.storages) - fromzeros)
-        return merge_batches(sampler1_batch, sampler2_batch)
+        if sampler1_batch is None or sampler2_batch is None:
+            return None
+            
+        return 
+        (sampler1_batch, sampler2_batch)
         
