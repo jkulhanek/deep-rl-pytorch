@@ -107,18 +107,18 @@ class DeepQTrainer(SingleTrainer):
 
         @pytorch_call(main_device)
         def act(observations):
-            observations = observations.unsqueeze(0)
+            observations = observations
             with torch.no_grad():
                 q = model(observations)
                 actions = torch.argmax(q, -1)
-            return actions.squeeze(0).item()
+            return actions.item()
 
         @pytorch_call(main_device)
         def q(observations):
-            observations = observations.unsqueeze(0)
+            observations = observations
             with torch.no_grad():
                 q = model(observations)
-            return q.squeeze(0).detach()
+            return q.detach()
 
         self._act = act
         self._q = q
