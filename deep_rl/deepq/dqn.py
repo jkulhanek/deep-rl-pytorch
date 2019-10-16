@@ -228,11 +228,11 @@ class DeepQAgent(AbstractAgent):
 
     def q(self, state):
         with torch.no_grad():
-            observation = torch.from_numpy(state).unsqueeze(0)
-            return self.model(observation).squeeze(0).numpy()
+            observation = torch.from_numpy(state)
+            return self.model(observation).numpy()
 
     def act(self, state):
         with torch.no_grad():
-            observation = torch.from_numpy(state).unsqueeze(0)
+            observation = torch.from_numpy(state)
             action = torch.argmax(self.model(observation), dim = -1).squeeze(0)
             return action.item()
