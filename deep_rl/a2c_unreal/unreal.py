@@ -39,7 +39,7 @@ class UnrealModelBase:
         self.gamma = 0.99
         self.entropy_coefficient = 0.001
         self.value_coefficient = 0.5
-        self.max_gradient_norm = 40.0
+        self.max_gradient_norm = 0.5
         self.rms_alpha = 0.99
         self.rms_epsilon = 0.1
 
@@ -254,7 +254,6 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         self.gamma = 0.99
         self.allow_gpu = True
         self.replay_size = 2000
-        self.max_gradient_norm = 40.0
 
         self.log_dir = None
         self.win = None
