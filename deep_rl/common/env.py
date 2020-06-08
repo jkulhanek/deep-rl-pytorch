@@ -175,7 +175,7 @@ class VecTransposeImage(gym.vector.vector_env.VectorEnvWrapper):
         super().__init__(venv) 
         self._transpose = (0,) + tuple([1 + x for x in transpose])
         obs_space = copy(venv.observation_space)
-        obs_space.shape = tuple([obs_space.shape[i] for i in transpose]) 
+        obs_space.shape = tuple([obs_space.shape[i] for i in self._transpose]) 
         self.observation_space = obs_space
         self.action_space = venv.action_space
 
