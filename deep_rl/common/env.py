@@ -180,9 +180,25 @@ class VecTransposeImage(gym.vector.vector_env.VectorEnvWrapper):
         self.action_space = venv.action_space
 
     def reset_wait(self):
-        obs = self.env.reset()
+        obs = self.env.reset_wait()
         obs = np.transpose(obs, self._transpose)
         return obs
+
+    def reset_async(self):
+        self.env.reset_async()
+
+    def close_extras(self, **kwargs):
+        self.env.close_extras(**kwargs)
+
+    def close(self, **kwargs):
+        self.env.clost(**kwargs)
+
+    def seed(self, *args, **kwargs):
+        self.env.seed(*args, **kwargs)
+
+
+    def step_async(self, actions):
+        self.env.step_async(actions)
 
     def step_wait(self):
         obs, reward, done, info = self.env.step_wait()
