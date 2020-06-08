@@ -179,12 +179,12 @@ class VecTransposeImage(gym.vector.vector_env.VectorEnvWrapper):
         self.action_space = venv.action_space
 
     def reset_wait(self):
-        obs = self.venv.reset()
+        obs = self.env.reset()
         obs = np.transpose(obs, self._transpose)
         return obs
 
     def step_wait(self):
-        obs, reward, done, info = self.venv.step_wait()
+        obs, reward, done, info = self.env.step_wait()
         obs = np.transpose(obs, self._transpose)
         return obs, reward, done, info
 
@@ -225,14 +225,13 @@ class ScaledFloatFrame(gym.ObservationWrapper):
 
 class VecFrameStack(gym.vector.vector_env.VectorEnvWrapper):
     def __init__(self, venv, nstack):
-        self.venv = venv
+        super().__init__(self, venv)
         self.nstack = nstack
         wos = venv.observation_space  # wrapped ob space
         low = np.repeat(wos.low, self.nstack, axis=-1)
         high = np.repeat(wos.high, self.nstack, axis=-1)
         self.stackedobs = np.zeros((venv.num_envs,) + low.shape, low.dtype)
         observation_space = spaces.Box(low=low, high=high, dtype=venv.observation_space.dtype)
-        super().__init__(self, venv)
         self.observation_space=observation_space
 
     def step_wait(self):
