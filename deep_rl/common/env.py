@@ -81,7 +81,8 @@ def make_vec_envs(env_name, seed, num_processes, gamma, log_dir, add_timestep, a
             for i in range(num_processes)]
 
     if len(envs) > 1:
-        envs = gym.vector.AsyncVectorEnv(envs)
+        # envs = gym.vector.AsyncVectorEnv(envs)
+        envs = gym.vector.SyncVectorEnv(envs)
     else:
         envs = gym.vector.SyncVectorEnv(envs)
 
