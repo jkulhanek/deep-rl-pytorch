@@ -1,17 +1,11 @@
 import os
 import time
 import gym
+from gym import spaces
 import numpy as np
 import torch
 from gym.spaces.box import Box
 from copy import copy
-
-from baselines import bench
-from baselines.common.atari_wrappers import make_atari, wrap_deepmind
-from .vec_env import VecEnvWrapper, SubprocVecEnv, DummyVecEnv
-from baselines.common.vec_env.vec_normalize import VecNormalize as VecNormalize_
-from baselines.common.vec_env.vec_frame_stack import VecFrameStack
-
 
 try:
     import dm_control2gym
@@ -52,7 +46,8 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
         if is_atari:
-            env = make_atari(env_id)
+            env = gym.make(env_id)
+            env = gym.wrappers.AtariPreprocessing(env)
 
         env.seed(seed + rank)
 
@@ -63,12 +58,13 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
             env = AddTimestep(env)
 
         if log_dir is not None:
-            env = bench.Monitor(env, os.path.join(log_dir, str(rank)),
-                                allow_early_resets=allow_early_resets)
+            env = gym.wrappers.Monitor(env, os.path.join(log_dir, str(rank)))
 
         if is_atari:
             if len(env.observation_space.shape) == 3:
-                env = wrap_deepmind(env)
+                # TODO: implement same preprocessing as in deepmind
+                # env = wrap_deepmind(env)
+                pass
         
         return env
 
@@ -83,16 +79,9 @@ def make_vec_envs(env_name, seed, num_processes, gamma, log_dir, add_timestep, a
             for i in range(num_processes)]
 
     if len(envs) > 1:
-        envs = SubprocVecEnv(envs)
+        envs = gym.vector.AsyncVectorEnv(envs)
     else:
-        envs = DummyVecEnv(envs)
-
-    if len(envs.observation_space.shape) == 1:
-        if gamma is None:
-            envs = VecNormalize(envs, ret=False)
-        else:
-            envs = VecNormalize(envs, gamma=gamma)
-
+        envs = gym.vector.SyncVectorEnv(envs)
 
     if num_frame_stack is not None:
         if num_frame_stack != 1:
@@ -175,18 +164,18 @@ class TransposeImage(TransposeObs):
     def observation(self, ob):
         return self.transpose_observation(ob, self.env.observation_space)
 
-class VecTransposeImage(VecEnvWrapper):
+class VecTransposeImage(gym.vector.vector_env.VectorEnvWrapper):
     def __init__(self, venv, transpose = [2, 0, 1]):
         if venv.observation_space.__class__.__name__ != 'Box':
             raise Exception('Env type %s is not supported' % venv.__class__.__name__)
 
+        super().__init__(venv) 
         self._transpose = (0,) + tuple([1 + x for x in transpose])
         obs_space = copy(venv.observation_space)
-        obs_space.shape = tuple([obs_space.shape[i] for i in transpose])
+        obs_space.shape = tuple([obs_space.shape[i] for i in transpose]) 
+        self.observation_space = obs_space
 
-        super().__init__(venv, observation_space=obs_space)
-
-    def reset(self):
+    def reset_wait(self):
         obs = self.venv.reset()
         obs = np.transpose(obs, self._transpose)
         return obs
@@ -195,28 +184,6 @@ class VecTransposeImage(VecEnvWrapper):
         obs, reward, done, info = self.venv.step_wait()
         obs = np.transpose(obs, self._transpose)
         return obs, reward, done, info
-
-
-class VecNormalize(VecNormalize_):
-
-    def __init__(self, *args, **kwargs):
-        super(VecNormalize, self).__init__(*args, **kwargs)
-        self.training = True
-
-    def _obfilt(self, obs):
-        if self.ob_rms:
-            if self.training:
-                self.ob_rms.update(obs)
-            obs = np.clip((obs - self.ob_rms.mean) / np.sqrt(self.ob_rms.var + self.epsilon), -self.clipob, self.clipob)
-            return obs
-        else:
-            return obs
-
-    def train(self):
-        self.training = True
-
-    def eval(self):
-        self.training = False
 
 
 class ScaledFloatFrame(gym.ObservationWrapper):
@@ -252,6 +219,33 @@ class ScaledFloatFrame(gym.ObservationWrapper):
 
 
         return self.transform_observation(ob, self.env.observation_space)
+
+class VecFrameStack(gym.vector.vector_env.VectorEnvWrapper):
+    def __init__(self, venv, nstack):
+        self.venv = venv
+        self.nstack = nstack
+        wos = venv.observation_space  # wrapped ob space
+        low = np.repeat(wos.low, self.nstack, axis=-1)
+        high = np.repeat(wos.high, self.nstack, axis=-1)
+        self.stackedobs = np.zeros((venv.num_envs,) + low.shape, low.dtype)
+        observation_space = spaces.Box(low=low, high=high, dtype=venv.observation_space.dtype)
+        super().__init__(self, venv)
+        self.observation_space=observation_space
+
+    def step_wait(self):
+        obs, rews, news, infos = self.env.step_wait()
+        self.stackedobs = np.roll(self.stackedobs, shift=-1, axis=-1)
+        for (i, new) in enumerate(news):
+            if new:
+                self.stackedobs[i] = 0
+        self.stackedobs[..., -obs.shape[-1]:] = obs
+        return self.stackedobs, rews, news, infos
+
+    def reset_wait(self):
+        obs = self.env.reset_wait()
+        self.stackedobs[...] = 0
+        self.stackedobs[..., -obs.shape[-1]:] = obs
+        return self.stackedobs
 
 
 class RewardCollector(gym.Wrapper):
