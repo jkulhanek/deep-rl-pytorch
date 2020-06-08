@@ -2,6 +2,8 @@ import os
 import time
 import gym
 from gym import spaces
+import gym.wrappers
+import gym.vector
 import numpy as np
 import torch
 from gym.spaces.box import Box
@@ -58,7 +60,7 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
             env = AddTimestep(env)
 
         if log_dir is not None:
-            env = gym.wrappers.Monitor(env, os.path.join(log_dir, str(rank)))
+            env = gym.wrappers.Monitor(env, os.path.join(log_dir, str(rank)), force=True)
 
         if is_atari:
             if len(env.observation_space.shape) == 3:
