@@ -176,6 +176,7 @@ class VecTransposeImage(gym.vector.vector_env.VectorEnvWrapper):
         obs_space = copy(venv.observation_space)
         obs_space.shape = tuple([obs_space.shape[i] for i in transpose]) 
         self.observation_space = obs_space
+        self.action_space = venv.action_space
 
     def reset_wait(self):
         obs = self.venv.reset()
