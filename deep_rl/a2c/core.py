@@ -33,7 +33,7 @@ def to_numpy(tensor):
     if isinstance(tensor, KeepTensor):
         return tensor.data
     elif isinstance(tensor, tuple):
-        return tuple(to_numpy(list(tensor)))
+        return tuple((to_numpy(x) for x in tensor))
     elif isinstance(tensor, list):
         return [to_numpy(x) for x in tensor]
     elif isinstance(tensor, np.ndarray):

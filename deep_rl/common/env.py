@@ -82,8 +82,7 @@ def make_vec_envs(env_name, seed, num_processes, gamma, log_dir, add_timestep, a
             for i in range(num_processes)]
 
     if len(envs) > 1:
-        # envs = gym.vector.AsyncVectorEnv(envs)
-        envs = gym.vector.SyncVectorEnv(envs)
+        envs = gym.vector.AsyncVectorEnv(envs)
     else:
         envs = gym.vector.SyncVectorEnv(envs)
 
@@ -192,11 +191,10 @@ class VecTransposeImage(gym.vector.vector_env.VectorEnvWrapper):
         self.env.close_extras(**kwargs)
 
     def close(self, **kwargs):
-        self.env.clost(**kwargs)
+        self.env.close(**kwargs)
 
     def seed(self, *args, **kwargs):
         self.env.seed(*args, **kwargs)
-
 
     def step_async(self, actions):
         self.env.step_async(actions)
