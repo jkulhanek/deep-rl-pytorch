@@ -4,7 +4,9 @@ from collections import namedtuple
 from math import ceil
 
 RolloutBatch = namedtuple('RolloutBatch', ['observations', 'returns','actions', 'masks', 'states'])
-KeepTensor = namedtuple('KeepTensor', ['data'])
+class KeepTensor:
+    def __init__(self, data):
+        self.data = data
 
 def to_tensor(value, device):
     if isinstance(value, RolloutBatch):
@@ -17,7 +19,7 @@ def to_tensor(value, device):
         return tuple(to_tensor(list(value), device))
 
     elif isinstance(value, dict):
-        return {key: to_tensor(val) for key, val in value.items()}
+        return {key: to_tensor(val, device) for key, val in value.items()}
 
     elif isinstance(value, np.ndarray):
         if value.dtype == np.bool:
