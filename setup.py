@@ -11,6 +11,8 @@ setup(
     long_description=open('README.md').read(),
     install_requires=[
         #'baselines @ git+https://github.com/openai/baselines.git',
+        'matplotlib',
+        'numpy',
         'torch',
         'gym'
     ]
