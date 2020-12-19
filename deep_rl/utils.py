@@ -11,6 +11,8 @@ class KeepTensor:
 
 
 def to_tensor(value, device):
+    if value is None:
+        return None
     if dataclasses.is_dataclass(value):
         return dataclasses.replace(value, to_tensor(value.__dict__, device))
 
@@ -18,10 +20,8 @@ def to_tensor(value, device):
         return [to_tensor(x, device) for x in value]
     elif isinstance(value, tuple):
         return tuple(to_tensor(list(value), device))
-
     elif isinstance(value, dict):
         return {key: to_tensor(val, device) for key, val in value.items()}
-
     elif isinstance(value, np.ndarray):
         if value.dtype == np.bool:
             value = value.astype(np.float32)
@@ -34,6 +34,8 @@ def to_tensor(value, device):
 
 
 def to_numpy(tensor):
+    if tensor is None:
+        return None
     if isinstance(tensor, KeepTensor):
         return tensor.data
     elif dataclasses.is_dataclass(tensor):
@@ -43,6 +45,8 @@ def to_numpy(tensor):
         return tuple((to_numpy(x) for x in tensor))
     elif isinstance(tensor, list):
         return [to_numpy(x) for x in tensor]
+    elif isinstance(tensor, dict):
+        return {key: to_numpy(val) for key, val in tensor.items()}
     elif isinstance(tensor, np.ndarray):
         return tensor
     elif torch.is_tensor(tensor):

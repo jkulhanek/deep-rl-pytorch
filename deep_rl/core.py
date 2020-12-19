@@ -219,7 +219,7 @@ class CompiledTrainer(AbstractTrainerWrapper):
         return self.trainer.run(self.process)
 
     def test(self, *args, **kwargs):
-        from .common.tester import test_trainer
+        from .testing import test_trainer
         test_trainer(self, *args, **kwargs)
 
     def __repr__(self):

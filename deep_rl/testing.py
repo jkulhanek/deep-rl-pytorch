@@ -1,9 +1,24 @@
 import gym
+from gym.vector import VectorEnv
 import gym.spaces
 import numpy as np
-from .vec_env import VecEnv, flatten_observations
 import tempfile
-from .torchsummary import get_shape
+
+
+def flatten_observations(obs):
+    assert isinstance(obs, (list, tuple))
+    assert len(obs) > 0
+
+    if isinstance(obs[0], dict):
+        keys = obs[0].keys()
+        return {k: flatten_observations([o[k] for o in obs]) for k in keys}
+    elif isinstance(obs[0], list):
+        return [flatten_observations([o[i] for o in obs]) for i in len(obs[0])]
+    elif isinstance(obs[0], tuple):
+        return tuple([flatten_observations([o[i] for o in obs]) for i in range(len(obs[0]))])
+    else:
+        return np.stack(obs)
+
 
 class TestingEnv(gym.Env):
     def __init__(self, observation_space, action_space):
@@ -16,16 +31,18 @@ class TestingEnv(gym.Env):
     def step(self, action):
         return self.observation_space.sample(), 0.0, False, dict()
 
+
 class TestFinished(Exception):
     def __init__(self):
         super().__init__()
 
-class TestingVecEnv(VecEnv):
+
+class TestingVecEnv(VectorEnv):
     def __init__(self, n_processes, observation_space, action_space):
         super().__init__(n_processes, observation_space, action_space)
 
     def _sample(self):
-        return flatten_observations([self.observation_space.sample() for _ in range(self.num_envs)])
+        return self.observation_space.sample()
 
     def reset(self):
         return self._sample()
@@ -34,17 +51,21 @@ class TestingVecEnv(VecEnv):
         pass
 
     def step_wait(self):
-        return self._sample(), np.zeros((self.num_envs,), dtype = np.float32), np.zeros((self.num_envs,), dtype = np.bool), [dict() for _ in range(self.num_envs)]
+        return self._sample(), np.zeros((self.num_envs,), dtype=np.float32), np.zeros((self.num_envs,), dtype=np.bool), [dict() for _ in range(self.num_envs)]
+
+    def close_extras(self, *args, **kwargs):
+        pass
+
 
 def fake_env(env):
     if hasattr(env, 'step_wait'):
-        if hasattr(env, 'venv'):
-            original = env.venv
+        if hasattr(env, 'env'):
+            original = env.env
             child, original = fake_env(original)
             env.venv = child
             return env, original
         else:
-            return TestingVecEnv(env.num_envs, env.observation_space, env.action_space), env
+            return TestingVecEnv(env.num_envs, env.single_observation_space, env.single_action_space), env
 
     else:
         if hasattr(env, 'env'):
@@ -54,6 +75,7 @@ def fake_env(env):
             return env, original
         else:
             return TestingEnv(env.observation_space, env.action_space), env
+
 
 def assert_in_space(o, space):
     if isinstance(space, gym.spaces.Tuple):
@@ -68,7 +90,8 @@ def assert_in_space(o, space):
         if o.shape != space.shape:
             raise Exception("Observation was not sampled from the space. Expected shape was %s, real shape was %s" % (space.shape, o.shape))
 
-def test_environment(env, iterations = 30):
+
+def test_environment(env, iterations=30):
     env_faked, original = fake_env(env)
     print('Faked environment: %s' % original.__class__.__name__)
     assert_in_space(env_faked.reset(), env_faked.observation_space)
@@ -82,6 +105,7 @@ def test_environment(env, iterations = 30):
         assert_in_space(o, env_faked.observation_space)
         assert_in_space(o2, env_faked.observation_space)
 
+
 def get_space_shape(space):
     if space.__class__.__name__ == 'Box':
         return space.shape
@@ -91,8 +115,10 @@ def get_space_shape(space):
 
     raise Exception('Environment type not supported')
 
-def test_trainer(trainer, iterations = 30, allow_gpu = False):
+
+def test_trainer(trainer, iterations=30, allow_gpu=False):
     create_env = trainer.unwrapped.create_env
+
     def wrap_env(env):
         env, original = fake_env(env)
         print('Faked environment: %s' % original.__class__.__name__)
@@ -112,7 +138,7 @@ def test_trainer(trainer, iterations = 30, allow_gpu = False):
 
         # Replace create env with dummy env
         trainer.unwrapped.create_env = _create_env
-        
+
         t = trainer
         while hasattr(t, 'trainer'):
             # Redirect saving to temp directory
@@ -122,23 +148,23 @@ def test_trainer(trainer, iterations = 30, allow_gpu = False):
             t = t.trainer
         if allow_gpu is not None:
             trainer.unwrapped.allow_gpu = allow_gpu
-            
+
         trainer.unwrapped.replay_size = 50
         trainer.unwrapped.preprocess_steps = 10
 
         process_base = trainer.process
+
         def process(*args, **kwargs):
             res = process_base(*args, **kwargs)
-            
+
             # Run 30 iterations of process
             if trainer.unwrapped._global_t > iterations:
                 raise TestFinished()
             return res
         trainer.process = process
-        
+
         try:
             trainer.run()
             trainer.run = lambda *args, **kwargs: print('ERROR: Cannot run tested trainer')
         except TestFinished:
             pass
-

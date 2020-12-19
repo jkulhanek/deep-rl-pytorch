@@ -3,8 +3,9 @@ import numpy as np
 from collections import namedtuple
 from math import ceil
 
-RolloutBatch = namedtuple('RolloutBatch', ['observations', 'returns','actions', 'masks', 'states'])
+RolloutBatch = namedtuple('RolloutBatch', ['observations', 'returns', 'actions', 'masks', 'states'])
 KeepTensor = namedtuple('KeepTensor', ['data'])
+
 
 def to_tensor(value, device):
     if value is None:
@@ -29,7 +30,8 @@ def to_tensor(value, device):
     elif torch.is_tensor(value):
         return value.to(device)
     else:
-        raise Exception('%s Not supported'% type(value))
+        raise Exception('%s Not supported' % type(value))
+
 
 def to_numpy(tensor):
     if tensor is None:
@@ -41,7 +43,7 @@ def to_numpy(tensor):
     elif isinstance(tensor, list):
         return [to_numpy(x) for x in tensor]
     elif isinstance(tensor, dict):
-        return { key: to_numpy(value) for key, value in tensor.items()}
+        return {key: to_numpy(value) for key, value in tensor.items()}
     elif isinstance(tensor, np.ndarray):
         return tensor
     elif torch.is_tensor(tensor):
@@ -51,13 +53,15 @@ def to_numpy(tensor):
     else:
         raise Exception('Not supported type %s' % type(tensor))
 
+
 def pytorch_call(device):
     def wrap(function):
-        def call(*args, **kwargs): 
+        def call(*args, **kwargs):
             results = function(*to_tensor(args, device), **to_tensor(kwargs, device))
             return to_numpy(results)
         return call
     return wrap
+
 
 def detach_all(data):
     if isinstance(data, list):
@@ -66,6 +70,7 @@ def detach_all(data):
         return tuple(detach_all(list(data)))
     else:
         return data.detach()
+
 
 def forward_masked_rnn(inputs, masks, states, forward_rnn):
     def mask_states(states, mask):
@@ -76,11 +81,11 @@ def forward_masked_rnn(inputs, masks, states, forward_rnn):
         else:
             return states * mask.view(1, -1, 1)
 
-    has_zeros = ((masks[:, 1:] == 0.0) \
-        .any(dim=0)
-        .nonzero()
-        .squeeze()
-        .cpu())
+    has_zeros = ((masks[:, 1:] == 0.0)
+                 .any(dim=0)
+                 .nonzero(as_tuple=False)
+                 .squeeze()
+                 .cpu())
 
     T = masks.size()[1]
 
@@ -100,7 +105,7 @@ def forward_masked_rnn(inputs, masks, states, forward_rnn):
         # This is much faster
         start_idx = has_zeros[i]
         end_idx = has_zeros[i + 1]
-        
+
         rnn_scores, states = forward_rnn(
             inputs[:, start_idx:end_idx],
             mask_states(states, masks[:, start_idx])
@@ -111,12 +116,12 @@ def forward_masked_rnn(inputs, masks, states, forward_rnn):
     # assert len(outputs) == T
     # x is a (N, T, -1) tensor
     outputs = torch.cat(outputs, dim=1)
-    
+
     # flatten
     return outputs, states
 
 
-def minibatch_gradient_update(inputs, compute_loss_fn, zero_grad_fn, optimize_fn, chunks = 1):
+def minibatch_gradient_update(inputs, compute_loss_fn, zero_grad_fn, optimize_fn, chunks=1):
     def split_inputs(inputs, chunks, axis):
         if isinstance(inputs, list):
             return list(map(list, split_inputs(tuple(inputs), chunks, axis)))
@@ -132,7 +137,6 @@ def minibatch_gradient_update(inputs, compute_loss_fn, zero_grad_fn, optimize_fn
         losses[0].backward()
         optimize_fn()
         return [x.item() for x in losses]
-
 
     main_inputs = split_inputs(inputs[:-1], chunks, 0)
     states_inputs = split_inputs(inputs[-1:], chunks, 1)
@@ -153,11 +157,12 @@ def minibatch_gradient_update(inputs, compute_loss_fn, zero_grad_fn, optimize_fn
         if total_results is None:
             total_results = results
         else:
-            total_results = list(map(lambda x,y: x + y, total_results, results))
+            total_results = list(map(lambda x, y: x + y, total_results, results))
 
     # Optimize
     optimize_fn()
     return [x.item() for x in total_results]
+
 
 class AutoBatchSizeOptimizer:
     def __init__(self, zero_grad_fn, compute_loss_fn, apply_gradients_fn):
@@ -186,7 +191,6 @@ class AutoBatchSizeOptimizer:
         return results
 
 
-
 def switch_time_batch(tensor):
     if isinstance(tensor, list):
         return [switch_time_batch(x) for x in tensor]
@@ -211,3 +215,4 @@ def forward_masked_rnn_transposed(inputs, masks, states, forward_rnn):
     outputs, states = forward_masked_rnn(inputs, masks, states, forward_rnn)
     states = switch_time_batch(states)
     return outputs, states
+

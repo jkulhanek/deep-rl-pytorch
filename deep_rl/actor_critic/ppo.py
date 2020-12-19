@@ -11,7 +11,7 @@ import torch.optim as optim
 from ..core import SingleTrainer
 from ..common.env import VecTransposeImage, make_vec_envs
 from ..common import MetricContext
-from ..common.torchsummary import minimal_summary
+from ..common.torchsummary import minimal_summary, get_observation_shape
 from ..utils import pytorch_call, KeepTensor, detach_all
 from ..utils import expand_time_dimension, get_batch_size, split_batches
 from ..utils import batch_observations
@@ -235,7 +235,7 @@ class PPO(SingleTrainer):
             else:
                 return shapes.size()
 
-        shapes = (batch_shape + self.env.observation_space.shape, batch_shape, get_shape_rec(self._initial_states(self.num_processes)))
+        shapes = tuple(get_observation_shape(batch_shape, self.env.observation_space)) + (batch_shape, get_shape_rec(self._initial_states(self.num_processes)))
         minimal_summary(model, shapes)
 
     def _build_train(self, model, main_device):
