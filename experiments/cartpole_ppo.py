@@ -2,9 +2,10 @@ import gym
 import numpy as np
 
 from deep_rl import register_trainer
-from deep_rl.actor_critic import A2C as BaseTrainer
+from deep_rl.actor_critic import PPO as BaseTrainer
 from deep_rl.model import TimeDistributed
 from deep_rl.common.env import RewardCollector
+# from deep_rl.common.vec_env import SubprocVecEnv, DummyVecEnv
 from gym.vector import AsyncVectorEnv, SyncVectorEnv
 from torch import nn
 from torch.nn import functional as F
@@ -36,8 +37,10 @@ class Model(nn.Module):
 class Trainer(BaseTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.num_processes = 16
-        self.num_steps = 5
+        self.num_processes = 8
+        self.num_steps = 128
+        self.num_minibatches = 4
+        self.learning_rate = 2.5e-4
         self.gamma = .99
         self.allow_gpu = False
 
@@ -67,3 +70,4 @@ def default_args():
         env_kwargs=dict(id='CartPole-v0'),
         model_kwargs=dict()
     )
+

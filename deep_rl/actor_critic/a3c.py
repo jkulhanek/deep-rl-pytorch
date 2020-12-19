@@ -1,30 +1,25 @@
 from abc import abstractclassmethod
-from collections import namedtuple
-import tempfile
-import numpy as np
-import os
-import time
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
+import numpy as np
 
-from ..core import AbstractTrainer, SingleTrainer, AbstractAgent
 from ..common import MetricContext
-from ..common.torchsummary import minimal_summary
+from ..utils import pytorch_call, KeepTensor, detach_all
+from ..common.multiprocessing import ProcessServerTrainer
+from ..common.util import serialize_function
+from ..optim.shared_rmsprop import SharedRMSprop
 
-from ..a2c.model import TimeDistributedConv
-from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
 
-from .storage import RolloutStorage
+def batch_observations(observations):
+    if isinstance(observations[0], tuple):
+        return tuple(batch_observations(list(map(list, observations))))
+    elif isinstance(observations[0], list):
+        return list(map(lambda *x: batch_observations(x), *observations))
+    elif isinstance(observations[0], dict):
+        return {key: batch_observations([o[key] for o in observations]) for key in observations[0].keys()}
+    else:
+        return np.stack(observations, axis=0)
 
-def ensure_shared_grads(model, shared_model):
-    for param, shared_param in zip(model.parameters(),
-                                   shared_model.parameters()):
-        if shared_param.grad is not None:
-            return
-        shared_param._grad = param.grad
 
 def expand_time_dimension(inputs):
     if isinstance(inputs, list):
@@ -33,6 +28,84 @@ def expand_time_dimension(inputs):
         return tuple(expand_time_dimension(list(inputs)))
     else:
         return inputs.unsqueeze(0)
+
+
+def ensure_shared_grads(model, shared_model):
+    for param, shared_param in zip(model.parameters(),
+                                   shared_model.parameters()):
+        if shared_param.grad is not None:
+            return
+        shared_param._grad = param.grad
+
+
+class RolloutStorage:
+    def __init__(self, initial_observation, initial_states=[]):
+        self._terminal = self._last_terminal = False
+        self._states = self._last_states = initial_states
+        self._observation = self._last_observation = initial_observation
+        self._batch = []
+
+    def _transform_observation(self, observation):
+        if isinstance(observation, np.ndarray):
+            if observation.dtype == np.uint8:
+                return observation.astype(np.float32) / 255.0
+            else:
+                return observation.astype(np.float32)
+        elif isinstance(observation, list):
+            return [self._transform_observation(x) for x in observation]
+        elif isinstance(observation, tuple):
+            return tuple([self._transform_observation(x) for x in observation])
+
+    @property
+    def observation(self):
+        return self._transform_observation(self._observation)
+
+    @property
+    def terminal(self):
+        return float(self._terminal)
+
+    @property
+    def mask(self):
+        return 1 - self._terminal
+
+    @property
+    def states(self):
+        return self._states
+
+    def insert(self, observation, action, reward, terminal, value, states):
+        self._batch.append((self._observation, action, value, reward, terminal))
+        self._observation = observation
+        self._terminal = terminal
+        self._states = states
+
+    def batch(self, last_value, gamma):
+        # Batch in time dimension
+        b_actions, b_values, b_rewards, b_terminals = [np.stack([b[i] for b in self._batch], axis=0) for i in range(1, 5)]
+        b_observations = batch_observations([o[0] for o in self._batch])
+
+        # Compute cummulative returns
+        last_returns = (1.0 - b_terminals[-1]) * last_value
+        b_returns = np.concatenate([np.zeros_like(b_rewards), np.array([last_returns], dtype=np.float32)], axis=0)
+        for n in reversed(range(len(self._batch))):
+            b_returns[n] = b_rewards[n] + \
+                gamma * (1.0 - b_terminals[n]) * b_returns[n + 1]
+
+        # Compute RNN reset masks
+        b_masks = (1 - np.concatenate([np.array([self._last_terminal], dtype=np.bool), b_terminals[:-1]], axis=0))
+        result = (
+            self._transform_observation(b_observations),
+            b_returns[:-1].astype(np.float32),
+            b_actions,
+            b_masks.astype(np.float32),
+            self._last_states
+        )
+
+        self._last_observation = self._observation
+        self._last_states = self._states
+        self._last_terminal = self._terminal
+        self._batch = []
+        return result
+
 
 class A3CWorker:
     def __init__(self, shared_model, optimizer, create_model_fn):
@@ -56,7 +129,7 @@ class A3CWorker:
         self._build_graph()
         self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(1))
 
-    def process(self, context, mode = 'train', **kwargs):
+    def process(self, context, mode='train', **kwargs):
         metric_context = MetricContext()
         if mode == 'train':
             return self._process_train(context, metric_context)
@@ -64,7 +137,6 @@ class A3CWorker:
             return self._process_validation(context, metric_context)
         else:
             raise Exception('Mode not supported')
-
 
     def _sample_experience_batch(self):
         finished_episodes = ([], [])
@@ -82,7 +154,7 @@ class A3CWorker:
 
             if terminal:
                 observation = self.env.reset()
-            
+
             self.rollouts.insert(observation, action, reward, terminal, value, states)
 
             if terminal:
@@ -96,7 +168,6 @@ class A3CWorker:
 
         # Prepare next batch starting point
         return batched, (len(finished_episodes[0]),) + finished_episodes
-
 
     def _process_train(self, context, metric_context):
         self.model.load_state_dict(self.shared_model.state_dict())
@@ -122,7 +193,7 @@ class A3CWorker:
         else:
             self._initial_states = lambda _: []
 
-        main_device = torch.device('cpu') # TODO: add GPU support
+        main_device = torch.device('cpu')  # TODO: add GPU support
         model.train()
 
         # Build train and act functions
@@ -133,7 +204,7 @@ class A3CWorker:
             with torch.no_grad():
                 observations = expand_time_dimension(observations)
                 policy_logits, value, states = model(observations, states)
-                dist = torch.distributions.Categorical(logits = policy_logits)
+                dist = torch.distributions.Categorical(logits=policy_logits)
                 action = dist.sample()
                 action_log_probs = dist.log_prob(action)
                 return action.squeeze(0).item(), value.squeeze(0).squeeze(-1).item(), action_log_probs.squeeze(0).item(), KeepTensor(detach_all(states))
@@ -143,7 +214,7 @@ class A3CWorker:
             with torch.no_grad():
                 observations = expand_time_dimension(observations)
                 _, value, states = model(observations, states)
-                return value.squeeze(0).squeeze(-1).detach(), KeepTensor(detach_all(states))  
+                return value.squeeze(0).squeeze(-1).detach(), KeepTensor(detach_all(states))
 
         self._step = step
         self._value = value
@@ -152,21 +223,22 @@ class A3CWorker:
 
     def _build_train(self, model, main_device):
         optimizer = self.optimizer
+
         @pytorch_call(main_device)
-        def train(observations, returns, actions, masks, states = []):
+        def train(observations, returns, actions, masks, states=[]):
             policy_logits, value, _ = model(observations, states)
 
-            dist = torch.distributions.Categorical(logits = policy_logits)
+            dist = torch.distributions.Categorical(logits=policy_logits)
             action_log_probs = dist.log_prob(actions)
             dist_entropy = dist.entropy().mean()
-            
+
             # Compute losses
             advantages = returns - value.squeeze(-1)
             value_loss = advantages.pow(2).mean()
             action_loss = -(advantages.detach() * action_log_probs).mean()
             loss = value_loss * self.value_coefficient + \
                 action_loss - \
-                dist_entropy * self.entropy_coefficient   
+                dist_entropy * self.entropy_coefficient
 
             # Optimize
             optimizer.zero_grad()
@@ -178,3 +250,44 @@ class A3CWorker:
             return loss.item(), action_loss.item(), value_loss.item(), dist_entropy.item()
 
         return train
+
+
+class A3C(ProcessServerTrainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.gamma = 0.99
+        self.num_steps = 20
+        self.entropy_coefficient = 0.01
+        self.value_coefficient = 0.5
+        self.max_gradient_norm = 40.0
+        self.learning_rate = 0.0001
+        self.rms_alpha = 0.99
+        self.rms_epsilon = 1e-5
+        self.log_dir = None
+
+        self.allow_gpu = True
+
+    @abstractclassmethod
+    def create_model(self, **model_kwargs):
+        pass
+
+    def _initialize(self, **model_kwargs):
+        if hasattr(self, 'schedules') and 'learning_rate' in self.schedules:
+            raise Exception('Learning rate schedule is not yet implemented for a3c')
+
+        self.model = self.create_model(**model_kwargs).share_memory()
+        self.optimizer = SharedRMSprop(self.model.parameters(), self.learning_rate, self.rms_alpha, self.rms_epsilon).share_memory()
+        super()._initialize(**model_kwargs)
+        return self.model
+
+    def create_worker(self, id):
+        model_fn = serialize_function(self.create_model, **self._model_kwargs)
+        worker = A3CWorker(self.model, self.optimizer, model_fn)
+        worker.gamma = self.gamma
+        worker.num_steps = self.num_steps
+        worker.entropy_coefficient = self.entropy_coefficient
+        worker.value_coefficient = self.value_coefficient
+        worker.max_gradient_norm = self.max_gradient_norm
+        worker.allow_gpu = self.allow_gpu
+        return worker

@@ -1,9 +1,19 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+import gym.spaces
+from functools import partial
 
 from collections import OrderedDict
 import numpy as np
+
+
+def get_observation_shape(batch_size, space):
+    if isinstance(space, gym.spaces.Box):
+        return [(batch_size,) + space.shape]
+    if isinstance(space, gym.spaces.Tuple):
+        return sum(map(partial(get_observation_shape, batch_size), space), [])
+
 
 def sample_space(sizes, dtype):
     if isinstance(sizes, tuple):
@@ -18,6 +28,7 @@ def sample_space(sizes, dtype):
     else:
         raise Exception('Not supported')
 
+
 def sum_space(sizes):
     if isinstance(sizes, tuple):
         if len(sizes) == 0:
@@ -31,6 +42,7 @@ def sum_space(sizes):
     else:
         return sizes
 
+
 def shrink_shape(shape):
     res = None
     if isinstance(shape, tuple):
@@ -39,16 +51,17 @@ def shrink_shape(shape):
             res = tuple(res)
     elif isinstance(shape, list):
         res = [shrink_shape(x) for x in shape]
-    
+
     if res is not None:
         if len(res) == 1:
             shape = res[0]
         else:
             shape = res
-    
+
     return shape
 
-def get_shape(tensor, shrink = False):
+
+def get_shape(tensor, shrink=False):
     if shrink:
         return shrink_shape(get_shape(tensor))
 
@@ -58,6 +71,7 @@ def get_shape(tensor, shrink = False):
         return [get_shape(x) for x in tensor]
     else:
         return list(tensor.size())
+
 
 def summary(model, input_size, device="cuda"):
     # create properties
@@ -103,7 +117,6 @@ def summary(model, input_size, device="cuda"):
                     hook_obj = hook_dict.pop(module.inner)
                     hook_obj.remove()
                     hooks.remove(hook_obj)
-
 
     device = device.lower()
     assert device in [
@@ -168,6 +181,7 @@ def summary(model, input_size, device="cuda"):
     print("----------------------------------------------------------------")
     # return summary
 
+
 def minimal_summary(model, input_size):
     # assume 4 bytes/number (float on cuda).
     total_params = sum_space([x.size() for x in model.parameters()])
@@ -184,3 +198,4 @@ def minimal_summary(model, input_size):
     print("Input size (MB): %0.2f" % total_input_size)
     print("Params size (MB): %0.2f" % total_params_size)
     print("================================================================")
+

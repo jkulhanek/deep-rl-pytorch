@@ -1,6 +1,7 @@
-from .util import qlearning, double_qlearning
+from deep_rl.deepq.util import qlearning, double_qlearning
 import unittest
 import torch
+
 
 class QLearningTest(unittest.TestCase):
     def testQLearningLoss(self):
@@ -25,6 +26,7 @@ class QLearningTest(unittest.TestCase):
 
         # Loss is 0.5 * td_error^2
         self.assertEqual(loss.item(), 0.25)
+
 
 if __name__ == '__main__':
     unittest.main()

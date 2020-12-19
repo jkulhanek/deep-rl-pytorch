@@ -34,8 +34,8 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
     env_id = env_id
     if isinstance(env_id, dict):
         allow_early_resets = env_id.get('allow_early_resets', allow_early_resets)
-        env_id = env_id.get('id')        
-        
+        env_id = env_id.get('id')
+
     def _thunk():
         if callable(env_id):
             env = env_id()
@@ -68,12 +68,13 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
                 # TODO: implement same preprocessing as in deepmind
                 # env = wrap_deepmind(env)
                 pass
-        
+
         return env
 
     return _thunk
 
-def make_vec_envs(env_name, seed, num_processes, gamma, log_dir, add_timestep, allow_early_resets, num_frame_stack = None):
+
+def make_vec_envs(env_name, seed, num_processes, gamma, log_dir, add_timestep, allow_early_resets, num_frame_stack=None):
     if isinstance(env_name, dict):
         if num_frame_stack is None and 'num_frame_stack' in env_name:
             num_frame_stack = env_name.get('num_frame_stack')
@@ -124,7 +125,6 @@ class TransposeObs(gym.ObservationWrapper):
         super(TransposeObs, self).__init__(env)
 
 
-
 class TransposeImage(TransposeObs):
     def __init__(self, env=None, op=[2, 0, 1]):
         """
@@ -157,7 +157,7 @@ class TransposeImage(TransposeObs):
     def transpose_observation(self, ob, space):
         if space.__class__.__name__ == 'Box':
             if len(space.shape) == 3:
-                return ob if ob is None else np.transpose(ob, axes = self.op)
+                return ob if ob is None else np.transpose(ob, axes=self.op)
             return ob
         elif space.__class__.__name__ == 'Tuple':
             return tuple(map(lambda x: self.transpose_observation(*x), zip(ob, space.spaces)))
@@ -167,15 +167,16 @@ class TransposeImage(TransposeObs):
     def observation(self, ob):
         return self.transpose_observation(ob, self.env.observation_space)
 
+
 class VecTransposeImage(gym.vector.vector_env.VectorEnvWrapper):
-    def __init__(self, venv, transpose = [2, 0, 1]):
+    def __init__(self, venv, transpose=[2, 0, 1]):
         if venv.observation_space.__class__.__name__ != 'Box':
             raise Exception('Env type %s is not supported' % venv.__class__.__name__)
 
-        super().__init__(venv) 
+        super().__init__(venv)
         self._transpose = (0,) + tuple([1 + x for x in transpose])
         obs_space = copy(venv.observation_space)
-        obs_space.shape = tuple([obs_space.shape[i] for i in self._transpose]) 
+        obs_space.shape = tuple([obs_space.shape[i] for i in self._transpose])
         self.observation_space = obs_space
         self.action_space = venv.action_space
 
@@ -213,7 +214,7 @@ class ScaledFloatFrame(gym.ObservationWrapper):
     def transform_space(self, space):
         if space.__class__.__name__ == 'Box':
             if len(space.shape) == 3 and space.dtype == np.uint8:
-                return gym.spaces.Box(low=0.0, high=1.0, shape = space.shape, dtype = np.float32)
+                return gym.spaces.Box(low=0.0, high=1.0, shape=space.shape, dtype=np.float32)
             return space
         elif space.__class__.__name__ == 'Tuple':
             return gym.spaces.Tuple(tuple(map(self.transform_space, space.spaces)))
@@ -236,19 +237,20 @@ class ScaledFloatFrame(gym.ObservationWrapper):
         if ob is None:
             return None
 
-
         return self.transform_observation(ob, self.env.observation_space)
+
 
 class VecFrameStack(gym.vector.vector_env.VectorEnvWrapper):
     def __init__(self, venv, nstack):
-        super().__init__(self, venv)
+        super().__init__(venv)
         self.nstack = nstack
         wos = venv.observation_space  # wrapped ob space
         low = np.repeat(wos.low, self.nstack, axis=-1)
         high = np.repeat(wos.high, self.nstack, axis=-1)
         self.stackedobs = np.zeros((venv.num_envs,) + low.shape, low.dtype)
-        observation_space = spaces.Box(low=low, high=high, dtype=venv.observation_space.dtype)
-        self.observation_space=observation_space
+        shape = list(venv.observation_space)
+        observation_space = spaces.Box(low=low, high=high, shape=shape, dtype=venv.observation_space.dtype)
+        self.observation_space = observation_space
 
     def step_wait(self):
         obs, rews, news, infos = self.env.step_wait()
@@ -286,7 +288,7 @@ class RewardCollector(gym.Wrapper):
     def update(self, ob, rew, done, info):
         assert isinstance(info, dict)
 
-        self.rewards.append(rew)       
+        self.rewards.append(rew)
         info['reward'] = rew
         if done:
             eprew = sum(self.rewards)

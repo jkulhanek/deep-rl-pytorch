@@ -1,29 +1,24 @@
 from abc import abstractclassmethod
-from collections import namedtuple
-import tempfile
 import numpy as np
 import os
 import time
-import gym
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 
-from ..core import AbstractTrainer, SingleTrainer, AbstractAgent
-from ..common import MetricContext
-from ..common.torchsummary import minimal_summary
-from ..common.pytorch import pytorch_call, to_tensor, to_numpy, KeepTensor, detach_all
-from ..a2c.storage import RolloutStorage
-from ..a2c.a2c import get_batch_size, expand_time_dimension, A2CAgent
-from ..common.schedules import LinearSchedule
+from deep_rl.core import SingleTrainer
+from deep_rl.common import MetricContext
+from deep_rl.common.torchsummary import minimal_summary
+from deep_rl.utils import pytorch_call, to_tensor, KeepTensor, detach_all
+from ..a2c import RolloutStorage
+from ..agent import ActorCriticAgent
+from deep_rl.utils import get_batch_size, expand_time_dimension
+from deep_rl.common.schedules import LinearSchedule
 
-from .util import pixel_control_loss, value_loss, reward_prediction_loss
+from .utils import pixel_control_loss, value_loss, reward_prediction_loss
 from .storage import BatchExperienceReplay
-from .model import UnrealModel
 
-UnrealLoss = namedtuple('UnrealLoss', ['a2c_loss', 'actor_loss', 'value_loss', 'entropy', 'pixel_control_loss'])
 
 def without_last_item(inputs):
     if isinstance(inputs, list):
@@ -32,6 +27,7 @@ def without_last_item(inputs):
         return tuple(without_last_item(list(inputs)))
     else:
         return inputs[:, :-1]
+
 
 class UnrealModelBase:
     def __init__(self, max_time_steps, *args, **kwargs):
@@ -66,7 +62,8 @@ class UnrealModelBase:
         pass
 
     def show_summary(self, model):
-        batch_shape = (self.num_processes, self.num_steps) 
+        batch_shape = (self.num_processes, self.num_steps)
+
         def get_shape_rec(shapes):
             if isinstance(shapes, tuple):
                 return tuple(get_shape_rec(list(shapes)))
@@ -74,6 +71,7 @@ class UnrealModelBase:
                 return [get_shape_rec(x) for x in shapes]
             else:
                 return shapes.size()
+
         def extend_batch_dim(batch_shape, space):
             if space.__class__.__name__ == 'Box':
                 return (batch_shape,) + space.shape
@@ -87,18 +85,18 @@ class UnrealModelBase:
         inputs, returns, actions, masks, states = a2c_batch
         policy_logits, value, _ = model(inputs, masks, states)
 
-        dist = torch.distributions.Categorical(logits = policy_logits)
+        dist = torch.distributions.Categorical(logits=policy_logits)
         action_log_probs = dist.log_prob(actions)
         dist_entropy = dist.entropy().mean()
-        
+
         # Compute losses
         advantages = returns - value.squeeze(-1)
         value_loss = advantages.pow(2).mean()
         action_loss = -(advantages.detach() * action_log_probs).mean()
         loss = value_loss * self.value_coefficient + \
             action_loss - \
-            dist_entropy * self.entropy_coefficient   
-        
+            dist_entropy * self.entropy_coefficient
+
         return loss, action_loss.detach(), value_loss.detach(), dist_entropy.detach()
 
     def _get_input_for_pixel_control(self, inputs):
@@ -106,7 +104,7 @@ class UnrealModelBase:
 
     def _loss_pixel_control(self, model, batch, device):
         observations, actions, rewards, terminals = batch
-        masks = torch.ones(rewards.size(), dtype = torch.float32, device = device)
+        masks = torch.ones(rewards.size(), dtype=torch.float32, device=device)
         initial_states = to_tensor(self._initial_states(masks.size()[0]), device)
         predictions, _ = model.pixel_control(observations, masks, initial_states)
         predictions[:, -1].mul_(1.0 - terminals[:, -2].view(*terminals[:, -2].size(), 1, 1, 1))
@@ -115,7 +113,7 @@ class UnrealModelBase:
 
     def _loss_value_replay(self, model, batch, device):
         observations, actions, rewards, terminals = batch
-        masks = torch.ones(rewards.size(), dtype = torch.float32, device = device)
+        masks = torch.ones(rewards.size(), dtype=torch.float32, device=device)
         initial_states = to_tensor(self._initial_states(masks.size()[0]), device)
         predictions, _ = model.value_prediction(observations, masks, initial_states)
         predictions = predictions.squeeze(-1)
@@ -152,7 +150,6 @@ class UnrealModelBase:
             losses['rp_loss'] = reward_prediction_loss.item()
 
         return loss, losses
-
 
     def _build_train(self, model, main_device):
         optimizer = optim.RMSprop(model.parameters(), self.learning_rate, eps=self.rms_epsilon, alpha=self.rms_alpha)
@@ -202,12 +199,12 @@ class UnrealModelBase:
         if cuda_devices == 0 or not allow_gpu:
             print('Using CPU only')
             main_device = torch.device('cpu')
-            get_state_dict = lambda: model.state_dict()
+            def get_state_dict(): return model.state_dict()
         else:
             print('Using single GPU')
             main_device = torch.device('cuda:0')
             model = model.to(main_device)
-            get_state_dict = lambda: model.state_dict()
+            def get_state_dict(): return model.state_dict()
 
         model.train()
 
@@ -221,9 +218,8 @@ class UnrealModelBase:
                 observations = expand_time_dimension(observations)
                 masks = masks.view(batch_size, 1)
 
-
                 policy_logits, value, states = model(observations, masks, states)
-                dist = torch.distributions.Categorical(logits = policy_logits)
+                dist = torch.distributions.Categorical(logits=policy_logits)
                 action = dist.sample()
                 action_log_probs = dist.log_prob(action)
                 return action.squeeze(1).detach(), value.squeeze(1).squeeze(-1).detach(), action_log_probs.squeeze(1).detach(), KeepTensor(detach_all(states))
@@ -236,7 +232,7 @@ class UnrealModelBase:
                 masks = masks.view(batch_size, 1)
 
                 _, value, states = model(observations, masks, states)
-                return value.squeeze(1).squeeze(-1).detach(), KeepTensor(detach_all(states))  
+                return value.squeeze(1).squeeze(-1).detach(), KeepTensor(detach_all(states))
 
         self._step = step
         self._value = value
@@ -244,9 +240,10 @@ class UnrealModelBase:
         self.main_device = main_device
         return model
 
-class UnrealTrainer(SingleTrainer, UnrealModelBase):
+
+class Unreal(SingleTrainer, UnrealModelBase):
     def __init__(self, name, env_kwargs, model_kwargs, max_time_steps, **kwargs):
-        super().__init__(max_time_steps = max_time_steps, env_kwargs = env_kwargs, model_kwargs = model_kwargs)
+        super().__init__(max_time_steps=max_time_steps, env_kwargs=env_kwargs, model_kwargs=model_kwargs)
         self.max_time_steps = max_time_steps
         self.name = name
         self.num_steps = 20
@@ -279,9 +276,9 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
     def create_env(self, env):
         from .env import create_env
         env, self.validation_env = create_env(self.num_processes, env)
-        return env    
+        return env
 
-    def process(self, context, mode = 'train', **kwargs):
+    def process(self, context, mode='train', **kwargs):
         if not self.replay.full:
             while not self.replay.full:
                 self._sample_experience_batch()
@@ -304,7 +301,7 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         n_steps = 0
         observations = self.validation_env.reset()
         while not done:
-            action, _, _, states = self._step(observations, np.ones((1, 1), dtype = np.float32), states)
+            action, _, _, states = self._step(observations, np.ones((1, 1), dtype=np.float32), states)
             observations, reward, done, infos = self.validation_env.step(action)
             done = done[0]
             info = infos[0]
@@ -315,7 +312,6 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
             n_steps += 1
 
         return n_steps, (ep_length, ep_reward), metric_context
-
 
     def _sample_experience_batch(self):
         finished_episodes = ([], [])
@@ -331,7 +327,7 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
                 if 'episode' in info.keys():
                     finished_episodes[0].append(info['episode']['l'])
                     finished_episodes[1].append(info['episode']['r'])
-            
+
             self.rollouts.insert(observations, actions, rewards, terminals, values, states)
             self.replay.insert(last_observations, actions, rewards, terminals)
 
@@ -349,18 +345,17 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         vr_batch = self.replay.sample_sequence() if self.vr_weight > 0.0 else None
         rp_batch = self.replay.sample_rp_sequence() if self.rp_weight > 0.0 else None
         return dict(
-            a2c_batch = a2c_batch,
-            pixel_control_batch = pc_batch,
-            value_replay_batch = vr_batch,
-            reward_prediction_batch = rp_batch
+            a2c_batch=a2c_batch,
+            pixel_control_batch=pc_batch,
+            value_replay_batch=vr_batch,
+            reward_prediction_batch=rp_batch
         ), report
-
 
     def _process_train(self, context, metric_context):
         batch, report = self.sample_training_batch()
         loss, value_loss, action_loss, dist_entropy, losses = self._train(**batch)
 
-        fps = int(self._global_t/ (time.time() - self._tstart))
+        fps = int(self._global_t / (time.time() - self._tstart))
         metric_context.add_cummulative('updates', 1)
         metric_context.add_scalar('loss', loss)
         metric_context.add_scalar('value_loss', value_loss)
@@ -368,12 +363,12 @@ class UnrealTrainer(SingleTrainer, UnrealModelBase):
         metric_context.add_scalar('entropy', dist_entropy)
         metric_context.add_last_value_scalar('fps', fps)
         for key, value in losses.items():
-            metric_context.add_scalar(key, value)       
-        
+            metric_context.add_scalar(key, value)
+
         return self.num_steps * self.num_processes, report, metric_context
 
 
-class UnrealAgent(A2CAgent):   
+class UnrealAgent(ActorCriticAgent):
     def wrap_env(self, env):
         from .env import UnrealEnvBaseWrapper
         env = super().wrap_env(env)

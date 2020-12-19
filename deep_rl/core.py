@@ -11,9 +11,11 @@ from multiprocessing import Queue, Value
 from threading import Thread
 from functools import partial
 
+
 def _default_cum_value():
     return 0
-    
+
+
 class Schedule:
     def __init__(self):
         pass
@@ -23,6 +25,7 @@ class Schedule:
 
     def step(self, time):
         self.time = time
+
 
 class MetricContext:
     def __init__(self):
@@ -52,7 +55,7 @@ class MetricContext:
         values.extend((key, value) for key, value in self.lastvalues.items())
         values.extend((key, np.mean(x[-self.window_size:])) for key, x in self.accumulatives.items())
         values.extend((key, x) for key, x in self.cummulatives.items())
-        values.sort(key = lambda x: x[0])
+        values.sort(key=lambda x: x[0])
         print_table([('step', global_t)] + values)
 
     def flush(self, other):
@@ -65,7 +68,7 @@ class MetricContext:
         for key, val in self.accumulatives.items():
             other.accumulatives[key].extend(val)
 
-    def collect(self, writer, global_t, mode = 'train'):
+    def collect(self, writer, global_t, mode='train'):
         if mode == 'train':
             metrics_row = writer.record(global_t)
         elif mode == 'validation':
@@ -97,20 +100,21 @@ class AbstractAgent:
     def reset_state(self):
         pass
 
+
 class RandomAgent(AbstractAgent):
-    def __init__(self, action_space_size, seed = None):
+    def __init__(self, action_space_size, seed=None):
         super().__init__('random')
         self._action_space_size = action_space_size
-        self._random = random.Random(x = seed)
+        self._random = random.Random(x=seed)
 
     def act(self, state):
         return self._random.randrange(0, self._action_space_size)
+
 
 class LambdaAgent(AbstractAgent):
     def __init__(self, name, act_fn, **kwargs):
         super().__init__(name)
         self.act = lambda state: act_fn(state, **kwargs)
-
 
 
 class AbstractTrainer:
@@ -124,7 +128,6 @@ class AbstractTrainer:
         self.name = 'trainer'
 
         self.is_initialized = False
-        
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
@@ -148,7 +151,6 @@ class AbstractTrainer:
         super().__delattr__(name)
         if name in self.schedules:
             self.schedules.pop(name)
-
 
     def save(self, path):
         pass
@@ -175,13 +177,13 @@ class AbstractTrainer:
             raise Exception('Must be compiled before run')
 
         self.env = self.create_env(self._env_kwargs)
-        self.model = self._initialize(**self._model_kwargs) 
+        self.model = self._initialize(**self._model_kwargs)
         return None
 
     def __repr__(self):
         return '<%sTrainer>' % self.name
 
-    def compile(self, compiled_agent = None, **kwargs):
+    def compile(self, compiled_agent=None, **kwargs):
         if compiled_agent is None:
             compiled_agent = CompiledTrainer(self)
 
@@ -207,6 +209,7 @@ class AbstractTrainerWrapper(AbstractTrainer):
     def save(self, path):
         self.trainer.save(path)
 
+
 class CompiledTrainer(AbstractTrainerWrapper):
     def __init__(self, target, *args, **kwargs):
         super().__init__(target, *args, **kwargs)
@@ -215,7 +218,6 @@ class CompiledTrainer(AbstractTrainerWrapper):
     def run(self, **kwargs):
         return self.trainer.run(self.process)
 
-    
     def test(self, *args, **kwargs):
         from .common.tester import test_trainer
         test_trainer(self, *args, **kwargs)
@@ -235,9 +237,9 @@ class SingleTrainer(AbstractTrainer):
         self._is_stopped = False
 
         super().run(process, **kwargs)
-        
+
         while not self._is_stopped:
-            tdiff, _, _ = process(mode = 'train', context = dict())
+            tdiff, _, _ = process(mode='train', context=dict())
             self._global_t += tdiff
 
         self._finalize()
@@ -246,11 +248,12 @@ class SingleTrainer(AbstractTrainer):
     def stop(self):
         self._is_stopped = True
 
+
 class ThreadServerTrainer(AbstractTrainer):
     def __init__(self, name, env_kwargs, model_kwargs, **kwargs):
-        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs, **kwargs)
+        super().__init__(env_kwargs=env_kwargs, model_kwargs=model_kwargs, **kwargs)
         self.name = name
-        self._report_queue = Queue(maxsize = 16)
+        self._report_queue = Queue(maxsize=16)
         self._shared_global_t = Value('i', 0)
         self._shared_is_stopped = Value('i', False)
         self._num_workers = 16
@@ -258,9 +261,10 @@ class ThreadServerTrainer(AbstractTrainer):
     @property
     def _global_t(self):
         return self._shared_global_t.value
-    
+
     def _child_run(self, id):
         worker = self.create_worker(id)
+
         def _process(process, *args, **kwargs):
             result = process(*args, **kwargs)
             self._report_queue.put(result)
@@ -268,10 +272,10 @@ class ThreadServerTrainer(AbstractTrainer):
             worker._shared_is_stopped = self._shared_is_stopped.value
             return result
 
-        worker.run(process = partial(_process, process = worker.process))      
+        worker.run(process=partial(_process, process=worker.process))
 
     def _initialize(self, **model_kwargs):
-        self.workers = [Thread(target=self._child_run,args=(i,)) for i in range(self._num_workers)]
+        self.workers = [Thread(target=self._child_run, args=(i,)) for i in range(self._num_workers)]
 
     def stop(self):
         self._shared_is_stopped.value = True
@@ -282,7 +286,7 @@ class ThreadServerTrainer(AbstractTrainer):
     def create_worker(self, id):
         pass
 
-    def process(self, mode = 'train', **kwargs):
+    def process(self, mode='train', **kwargs):
         assert mode == 'train'
         delta_t, epend, stats = self._report_queue.get()
         return delta_t, epend, stats
@@ -304,8 +308,9 @@ class ThreadServerTrainer(AbstractTrainer):
             t.start()
 
         while not self._shared_is_stopped.value:
-            tdiff, _, _ = process(mode = 'train', context = dict())
+            tdiff, _, _ = process(mode='train', context=dict())
             self._shared_global_t.value += tdiff
 
         self._finalize()
         return None
+
