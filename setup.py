@@ -1,19 +1,12 @@
-from setuptools import setup
-from deep_rl import VERSION
+from setuptools import setup, find_packages
+from deep_rl import __version__
 
 setup(
     name='deep_rl',
-    version=VERSION,
-    packages=['deep_rl', 'deep_rl.actor_critic', 'deep_rl.actor_critic.unreal', 'deep_rl.common', 'deep_rl.model', 'deep_rl.deepq', 'deep_rl.optim'],
+    version=__version__,
+    packages=find_packages(include=('deep_rl', 'deep_rl.*')),
     author='Jonáš Kulhánek',
     author_email='jonas.kulhanek@live.com',
     license='MIT License',
     long_description=open('README.md').read(),
-    install_requires=[
-        #'baselines @ git+https://github.com/openai/baselines.git',
-        'matplotlib',
-        'numpy',
-        'torch',
-        'gym'
-    ]
-)
+    install_requires=[x.rstrip('\n') for x in open('requirements.txt').read()])
