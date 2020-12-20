@@ -277,6 +277,10 @@ class PPO(SingleTrainer):
             return loss.item(), action_loss.item(), value_loss.item(), dist_entropy.item()
 
         def train(*args):
+            # Update learning rate
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = self.learning_rate
+
             # observations, returns, actions, masks, old_value_preds
             loss, action_loss, value_loss, dist_entropy = 0, 0, 0, 0
             advantages = args[1] - args[4]

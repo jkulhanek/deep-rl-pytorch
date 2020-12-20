@@ -4,6 +4,7 @@ import torch.nn as nn
 import numpy as np
 
 from ..common import MetricContext
+from ..core import Schedule
 from ..utils import pytorch_call, KeepTensor, detach_all
 from ..common.multiprocessing import ProcessServerTrainer
 from ..common.util import serialize_function
@@ -122,6 +123,7 @@ class A3CWorker:
         self.max_gradient_norm = 40.0
         self.num_steps = 5
         self.gamma = 0.99
+        self.schedules = dict()
 
     def initialize(self):
         self.env = self.create_env()
@@ -130,6 +132,8 @@ class A3CWorker:
         self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(1))
 
     def process(self, context, mode='train', **kwargs):
+        for s in self.schedules.values():
+            s.step(self._global_t)
         metric_context = MetricContext()
         if mode == 'train':
             return self._process_train(context, metric_context)
@@ -226,6 +230,12 @@ class A3CWorker:
 
         @pytorch_call(main_device)
         def train(observations, returns, actions, masks, states=[]):
+            if isinstance(self.learning_rate, Schedule):
+                lr = self.learning_rate()
+                # Update learning rate
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr
+
             policy_logits, value, _ = model(observations, states)
 
             dist = torch.distributions.Categorical(logits=policy_logits)
@@ -290,4 +300,8 @@ class A3C(ProcessServerTrainer):
         worker.value_coefficient = self.value_coefficient
         worker.max_gradient_norm = self.max_gradient_norm
         worker.allow_gpu = self.allow_gpu
+        worker.learning_rate = self.learning_rate
+        for name, schedule in self.schedules.items():
+            setattr(worker, name, schedule)
+        worker.schedules = self.schedules
         return worker

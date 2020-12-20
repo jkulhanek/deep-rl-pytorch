@@ -134,6 +134,10 @@ class A2C(SingleTrainer):
 
         @pytorch_call(main_device)
         def train(observations, returns, actions, masks, states=[]):
+            # Update learning rate
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = self.learning_rate
+
             policy_logits, value, _ = model(observations, masks, states)
 
             dist = torch.distributions.Categorical(logits=policy_logits)

@@ -7,11 +7,12 @@ from .util import serialize_function
 from time import sleep
 from ..core import AbstractTrainer
 
+
 def _run_process(children, report_queue, global_t, is_stopped, is_paused, env_fn):
     try:
         if not hasattr(children, 'create_env') or children.create_env is None:
             children.create_env = env_fn(children)
-            
+
         if hasattr(children, 'initialize'):
             children.initialize()
 
@@ -25,7 +26,7 @@ def _run_process(children, report_queue, global_t, is_stopped, is_paused, env_fn
             children._is_stopped = False
             while not children._is_stopped:
                 children._global_t = global_t.value
-                tdiff, _, _ = process(mode = 'train', context = dict())
+                tdiff, _, _ = process(mode='train', context=dict())
                 children._global_t += tdiff
 
                 # TODO: better pausing
@@ -40,10 +41,11 @@ def _run_process(children, report_queue, global_t, is_stopped, is_paused, env_fn
 
             return None
 
-        return _run(process = partial(_process, process = children.process))
+        return _run(process=partial(_process, process=children.process))
     except Exception as e:
         report_queue.put('error')
         raise e
+
 
 class PausedToken:
     def __init__(self, is_paused, queue, num_processes):
@@ -65,13 +67,14 @@ class PausedToken:
         self.is_paused.value = False
         return None
 
+
 class ProcessServerTrainer(AbstractTrainer):
     def __init__(self, name, env_kwargs, model_kwargs, **kwargs):
-        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
+        super().__init__(env_kwargs=env_kwargs, model_kwargs=model_kwargs)
         self.name = name
         self.num_processes = 16
 
-        self._report_queue = Queue(maxsize = 16)
+        self._report_queue = Queue(maxsize=16)
         self._shared_global_t = Value('i', 0)
         self._shared_is_stopped = Value('i', False)
         self._shared_is_paused = Value('i', False)
@@ -80,17 +83,16 @@ class ProcessServerTrainer(AbstractTrainer):
     @property
     def _global_t(self):
         return self._shared_global_t.value
-  
 
     def _initialize(self, **model_kwargs):
         self.workers = [self.create_worker(i) for i in range(self.num_processes)]
         env_fn = serialize_function(self._sub_create_env, self._env_kwargs)
 
         # Create processes
-        self.processes = [mp.Process(target = _run_process, args = (
-            worker, 
-            self._report_queue, 
-            self._shared_global_t, 
+        self.processes = [mp.Process(target=_run_process, args=(
+            worker,
+            self._report_queue,
+            self._shared_global_t,
             self._shared_is_stopped,
             self._shared_is_paused,
             env_fn)) for worker in self.workers]
@@ -110,8 +112,8 @@ class ProcessServerTrainer(AbstractTrainer):
 
     def paused(self):
         return PausedToken(self._shared_is_paused, self._report_queue, self.num_processes)
-        
-    def process(self, mode = 'train', **kwargs):
+
+    def process(self, mode='train', **kwargs):
         if mode == 'train':
             if self._validation_token is not None:
                 self._validation_token.__exit__()
@@ -127,11 +129,11 @@ class ProcessServerTrainer(AbstractTrainer):
                 self._validation_token = self.paused().__enter__()
 
             return self.process_validation(**kwargs)
-        
+
         return delta_t, epend, stats
 
     def process_validation(self, **kwargs):
-        return self.validation_trainer.process(mode = 'validation', **kwargs)
+        return self.validation_trainer.process(mode='validation', **kwargs)
 
     def run(self, process, **kwargs):
         # Initialize
@@ -150,7 +152,7 @@ class ProcessServerTrainer(AbstractTrainer):
             t.start()
 
         while not self._shared_is_stopped.value:
-            tdiff, _, _ = process(mode = 'train', context = dict())
+            tdiff, _, _ = process(mode='train', context=dict())
             self._shared_global_t.value += tdiff
 
         for t in self.processes:
@@ -160,31 +162,29 @@ class ProcessServerTrainer(AbstractTrainer):
         return None
 
 
-
 class ThreadServerTrainer(AbstractTrainer):
     def __init__(self, name, env_kwargs, model_kwargs, **kwargs):
-        super().__init__(env_kwargs = env_kwargs, model_kwargs = model_kwargs)
+        super().__init__(env_kwargs=env_kwargs, model_kwargs=model_kwargs)
         self.name = name
         self.num_processes = 16
 
-        self._report_queue = Queue(maxsize = 16)
+        self._report_queue = Queue(maxsize=16)
         self._shared_global_t = Value('i', 0)
         self._shared_is_stopped = Value('i', False)
 
     @property
     def _global_t(self):
         return self._shared_global_t.value
-  
 
     def _initialize(self, **model_kwargs):
         self.workers = [self.create_worker(i) for i in range(self.num_processes)]
         env_fn = serialize_function(self._sub_create_env, self._env_kwargs)
 
         # Create processes
-        self.processes = [Thread(target = _run_process, args = (
-            worker, 
-            self._report_queue, 
-            self._shared_global_t, 
+        self.processes = [Thread(target=_run_process, args=(
+            worker,
+            self._report_queue,
+            self._shared_global_t,
             self._shared_is_stopped,
             self._shared_is_paused,
             env_fn)) for worker in self.workers]
@@ -200,7 +200,7 @@ class ThreadServerTrainer(AbstractTrainer):
     def create_worker(self, id):
         pass
 
-    def process(self, mode = 'train', **kwargs):
+    def process(self, mode='train', **kwargs):
         assert mode == 'train'
         delta_t, epend, stats = self._report_queue.get()
         return delta_t, epend, stats
@@ -222,7 +222,7 @@ class ThreadServerTrainer(AbstractTrainer):
             t.start()
 
         while not self._shared_is_stopped.value:
-            tdiff, _, _ = process(mode = 'train', context = dict())
+            tdiff, _, _ = process(mode='train', context=dict())
             self._shared_global_t.value += tdiff
 
         for t in self.processes:
@@ -230,4 +230,3 @@ class ThreadServerTrainer(AbstractTrainer):
 
         self._finalize()
         return None
-
