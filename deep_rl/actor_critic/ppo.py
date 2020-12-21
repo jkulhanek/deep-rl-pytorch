@@ -104,8 +104,6 @@ class PPO(SingleTrainer):
         self.entropy_coefficient = 0.01
         self.value_coefficient = 0.5
         self.max_gradient_norm = 0.5
-        self.rms_alpha = 0.99
-        self.rms_epsilon = 1e-5
         self.data_parallel = True
         self.learning_rate = 7e-4
         self.clip_param = 0.1
@@ -239,7 +237,7 @@ class PPO(SingleTrainer):
         minimal_summary(model, shapes)
 
     def _build_train(self, model, main_device):
-        optimizer = optim.RMSprop(model.parameters(), self.learning_rate, eps=self.rms_epsilon, alpha=self.rms_alpha)
+        optimizer = optim.Adam(model.parameters(), self.learning_rate)
 
         @pytorch_call(main_device)
         def train_minibatch(observations, returns, actions, masks, old_value_preds, old_action_log_probs, states, advantages):
