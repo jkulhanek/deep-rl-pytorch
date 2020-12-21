@@ -1,177 +1,11 @@
-from abc import abstractclassmethod
-from typing import Tuple, Dict
-import tempfile
-import numpy as np
-import os
-import time
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from gym.vector import AsyncVectorEnv
-from functools import partial
-
-from ..core import SingleTrainer
-from ..common.env import VecTransposeImage, make_vec_envs
-from ..common import MetricContext
-from ..common.torchsummary import minimal_summary, get_observation_shape
-from ..utils import pytorch_call, KeepTensor, detach_all, get_batch_size
-from ..utils import batch_observations, expand_time_dimension, AutoBatchSizeOptimizer
-
-
-class RolloutStorage:
-    def __init__(self, initial_observations, initial_states=[]):
-        self.num_processes = get_batch_size(initial_observations)
-
-        self._terminals = self._last_terminals = np.zeros(shape=(self.num_processes,), dtype=np.bool)
-        self._states = self._last_states = initial_states
-        self._observations = self._last_observations = initial_observations
-
-        self._batch = []
-
-    def _transform_observation(self, observation):
-        if isinstance(observation, np.ndarray):
-            if observation.dtype == np.uint8:
-                return observation.astype(np.float32) / 255.0
-            else:
-                return observation.astype(np.float32)
-        elif isinstance(observation, list):
-            return [self._transform_observation(x) for x in observation]
-        elif isinstance(observation, tuple):
-            return tuple([self._transform_observation(x) for x in observation])
-
-    @property
-    def observations(self):
-        return self._transform_observation(self._observations)
-
-    @property
-    def terminals(self):
-        return self._terminals.astype(np.float32)
-
-    @property
-    def masks(self):
-        return 1 - self.terminals
-
-    @property
-    def states(self):
-        return self._states
-
-    def insert(self, observations, actions, rewards, terminals, values, states):
-        self._batch.append((self._observations, actions, values, rewards, terminals))
-        self._observations = observations
-        self._terminals = terminals
-        self._states = states
-
-    def batch(self, last_values, gamma):
-        # Batch in time dimension
-        b_actions, b_values, b_rewards, b_terminals = [np.stack([b[i] for b in self._batch], axis=1) for i in range(1, 5)]
-        b_observations = batch_observations([o[0] for o in self._batch])
-
-        # Compute cummulative returns
-        last_returns = (1.0 - b_terminals[:, -1]) * last_values
-        b_returns = np.concatenate([np.zeros_like(b_rewards), np.expand_dims(last_returns, 1)], axis=1)
-        for n in reversed(range(len(self._batch))):
-            b_returns[:, n] = b_rewards[:, n] + \
-                gamma * (1.0 - b_terminals[:, n]) * b_returns[:, n + 1]
-
-        # Compute RNN reset masks
-        b_masks = (1 - np.concatenate([np.expand_dims(self._last_terminals, 1), b_terminals[:, :-1]], axis=1))
-        result = (
-            self._transform_observation(b_observations),
-            b_returns[:, :-1].astype(np.float32),
-            b_actions,
-            b_masks.astype(np.float32),
-            self._last_states
-        )
-
-        self._last_observations = self._observations
-        self._last_states = self._states
-        self._last_terminals = self._terminals
-        self._batch = []
-        return result
 
 import pytorch_lightning as pl
 
 
-class A2C(pl.LightningModule):
-    RolloutStorage = RolloutStorage
-
-    def __init__(self, model, env_fn, num_agents=16, val_env_fn=None):
-        super().__init__()
-        self.model = model
-        self.env_fn = env_fn
-        self.val_env_fn = val_env_fn if val_env_fn is not None else self.env_fn
-        self.num_agents = num_agents
-
-    def setup(self, stage):
-        super().setup(stage)
-        if stage == 'fit':
-            assert self.num_agents % self.trainer.world_size == 0, 'Number of agents has to be devisible by the world size'
-            global_rank = self.trainer.global_rank
-            agents_per_process = self.num_agents // self.trainer.world_size
-            self.env = AsyncVectorEnv([partial(self.env_fn, rank=i) for i in range(global_rank, global_rank + agents_per_process)])
-            self.rollout_storage = RolloutStorage(self.env.reset(), getattr(self.model, 'get_initial_states', lambda *args: None)(agents_per_process))
-
-    def compute_loss(self, batch) -> Tuple[torch.Tensor, Dict]:
-        pass
-
-    @torch.no_grad()
-    def _step(self, observations, masks, states):
-        batch_size = get_batch_size(observations)
-        observations = expand_time_dimension(observations)
-        masks = masks.view(batch_size, 1)
-
-        policy_logits, value, states = self.model(observations, masks, states)
-        dist = torch.distributions.Categorical(logits=policy_logits)
-        action = dist.sample()
-        action_log_probs = dist.log_prob(action)
-        return action.squeeze(1).detach(), value.squeeze(1).squeeze(-1).detach(), action_log_probs.squeeze(1).detach(), KeepTensor(detach_all(states))
-
-    @torch.no_grad()
-    def _value(self, observations, masks, states):
-        batch_size = get_batch_size(observations)
-        observations = expand_time_dimension(observations)
-        masks = masks.view(batch_size, 1)
-
-        _, value, states = self.model(observations, masks, states)
-        return value.squeeze(1).squeeze(-1).detach(), KeepTensor(detach_all(states))
-
-    def collect_and_sample(self):
-        finished_episodes = ([], [])
-        for _ in range(self.num_steps):
-            actions, values, action_log_prob, states = self._step(self.rollout_storage.observations, self.rollout_storage.masks, self.rollout_storage.states)
-
-            # Take actions in env and look the results
-            observations, rewards, terminals, infos = self.env.step(actions)
-
-            # Collect true rewards
-            for info in infos:
-                if 'episode' in info.keys():
-                    finished_episodes[0].append(info['episode']['l'])
-                    finished_episodes[1].append(info['episode']['r'])
-
-            self.rollout_storage.insert(observations, actions, rewards, terminals, values, states)
-
-        last_values, _ = self._value(self.rollout_storage.observations, self.rollout_storage.masks, self.rollout_storage.states)
-        batched = self.rollout_storage.batch(last_values, self.gamma)
-
-        # Prepare next batch starting point
-        return batched, (len(finished_episodes[0]),) + finished_episodes
-
-    def training_step(self, batch, batch_idx):
-        
-
-
-    def train_dataloader(self):
-        pass
-
-
-class A2C(SingleTrainer):
-
-    def __init__(self, name, env_kwargs, model_kwargs, max_time_steps, **kwargs):
+class ActorCriticTrainer(pl.Trainer):
+    def __init__(self, env_kwargs, model_kwargs, max_time_steps, **kwargs):
         super().__init__(env_kwargs=env_kwargs, model_kwargs=model_kwargs)
         self.max_time_steps = max_time_steps
-        self.name = name
         self.num_steps = 5
         self.num_processes = 16
         self.gamma = 0.99
@@ -189,10 +23,6 @@ class A2C(SingleTrainer):
         def not_initialized(*args, **kwargs):
             raise Exception('Not initialized')
         self._train = self._step = self._value = not_initialized
-
-    @abstractclassmethod
-    def create_model(self, **kwargs):
-        pass
 
     def show_summary(self, model):
         batch_shape = (self.num_processes, self.num_steps)
@@ -397,36 +227,75 @@ class A2C(SingleTrainer):
         return self.num_steps * self.num_processes, report, metric_context
 
 
-class A2CDynamicBatch(A2C):
-    def _build_train(self, model, main_device):
-        optimizer = optim.RMSprop(model.parameters(), self.learning_rate, eps=self.rms_epsilon, alpha=self.rms_alpha)
 
-        def compute_loss(observations, returns, actions, masks, states):
-            policy_logits, value, _ = model(observations, masks, states)
+    def __init__(self, env_kwargs, model_kwargs, *args, **kwargs):
+        self.schedules = dict()
+        super().__init__(*args, **kwargs)
+        self.env = None
+        self._env_kwargs = env_kwargs
+        self.model = None
+        self._model_kwargs = model_kwargs
+        self.name = 'trainer'
 
-            dist = torch.distributions.Categorical(logits=policy_logits)
-            action_log_probs = dist.log_prob(actions)
-            dist_entropy = dist.entropy().mean()
+        self.is_initialized = False
 
-            # Compute losses
-            advantages = returns - value.squeeze(-1)
-            value_loss = advantages.pow(2).mean()
-            action_loss = -(advantages.detach() * action_log_probs).mean()
-            loss = value_loss * self.value_coefficient + \
-                action_loss - \
-                dist_entropy * self.entropy_coefficient
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name in self.schedules:
+            self.schedules.pop(name)
 
-            return loss, action_loss.detach(), value_loss.detach(), dist_entropy.detach()
+        if isinstance(value, Schedule):
+            self.schedules[name] = value
 
-        def optimize():
-            nn.utils.clip_grad_norm_(model.parameters(), self.max_gradient_norm)
-            optimizer.step()
+    def __getattribute__(self, name):
+        value = super().__getattribute__(name)
+        if isinstance(value, Schedule):
+            if not hasattr(self, '_global_t'):
+                raise Exception('Schedules are supported only for classes with _global_t property')
+            value.step(getattr(self, '_global_t'))
+            return value()
+        else:
+            return value
 
-        zero_grad = optimizer.zero_grad
-        batch_optimizer = AutoBatchSizeOptimizer(zero_grad, compute_loss, optimize)
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if name in self.schedules:
+            self.schedules.pop(name)
 
-        @pytorch_call(main_device)
-        def train(*args):
-            return tuple(batch_optimizer.optimize(args))
+    def save(self, path):
+        pass
 
-        return train
+    def create_env(self, env):
+        if isinstance(env, dict):
+            env = gym.make(**env)
+
+        return env
+
+    @abc.abstractclassmethod
+    def _initialize(self, **model_kwargs):
+        pass
+
+    def _finalize(self):
+        pass
+
+    @abc.abstractclassmethod
+    def process(self, **kwargs):
+        pass
+
+    def run(self, process, **kwargs):
+        if process is None:
+            raise Exception('Must be compiled before run')
+
+        self.env = self.create_env(self._env_kwargs)
+        self.model = self._initialize(**self._model_kwargs)
+        return None
+
+    def __repr__(self):
+        return '<%sTrainer>' % self.name
+
+    def compile(self, compiled_agent=None, **kwargs):
+        if compiled_agent is None:
+            compiled_agent = CompiledTrainer(self)
+
+        return compiled_agent
+
