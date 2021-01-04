@@ -122,7 +122,7 @@ def expand_time_and_batch_dimensions(inputs):
 
 def split_batches(num_batches, x):
     if x is None:
-        return None
+        return [None] * num_batches
     if isinstance(x, np.ndarray):
         return np.array_split(x, num_batches)
     if isinstance(x, torch.Tensor):
