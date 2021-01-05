@@ -321,6 +321,7 @@ class Unreal(SingleTrainer, UnrealModelBase):
 
             # Take actions in env and look the results
             observations, rewards, terminals, infos = self.env.step(actions)
+            rewards = rewards.astype(np.float32)
 
             # Collect true rewards
             for info in infos:
