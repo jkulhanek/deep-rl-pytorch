@@ -90,33 +90,42 @@ class RolloutStorage:
         self._batch = []
         return result
 
-import pytorch_lightning as pl
 
+def assert_has_collect_reward_info(env):
+    current_env = env
+    while hasattr(current_env, 'env'):
+        if current_env.__class__.__name__ == 'RewardCollector':
+            return
+        current_env = env.env
+    raise ValueError(f'Environment does not have RewardCollector wrapper')
+
+
+import pytorch_lightning as pl
 
 class A2C(pl.LightningModule):
     RolloutStorage = RolloutStorage
 
-    def __init__(self, model, env_fn, num_agents=16, val_env_fn=None):
+    def __init__(self, model, env_fn, num_agents=16):
         super().__init__()
         self.model = model
         self.env_fn = env_fn
-        self.val_env_fn = val_env_fn if val_env_fn is not None else self.env_fn
         self.num_agents = num_agents
 
     def setup(self, stage):
         super().setup(stage)
         if stage == 'fit':
             assert self.num_agents % self.trainer.world_size == 0, 'Number of agents has to be devisible by the world size'
+            assert_has_collect_reward_info(self.env_fn(rank=0))
             global_rank = self.trainer.global_rank
             agents_per_process = self.num_agents // self.trainer.world_size
             self.env = AsyncVectorEnv([partial(self.env_fn, rank=i) for i in range(global_rank, global_rank + agents_per_process)])
-            self.rollout_storage = RolloutStorage(self.env.reset(), getattr(self.model, 'get_initial_states', lambda *args: None)(agents_per_process))
+            self.rollout_storage = self.RolloutStorage(self.env.reset(), getattr(self.model, 'get_initial_states', lambda *args: None)(agents_per_process))
 
     def compute_loss(self, batch) -> Tuple[torch.Tensor, Dict]:
         pass
 
     @torch.no_grad()
-    def _step(self, observations, masks, states):
+    def step_single(self, observations, masks, states):
         batch_size = get_batch_size(observations)
         observations = expand_time_dimension(observations)
         masks = masks.view(batch_size, 1)
@@ -125,18 +134,18 @@ class A2C(pl.LightningModule):
         dist = torch.distributions.Categorical(logits=policy_logits)
         action = dist.sample()
         action_log_probs = dist.log_prob(action)
-        return action.squeeze(1).detach(), value.squeeze(1).squeeze(-1).detach(), action_log_probs.squeeze(1).detach(), KeepTensor(detach_all(states))
+        return action.squeeze(1).detach(), value.squeeze(1).squeeze(-1).detach(), action_log_probs.squeeze(1).detach(), detach_all(states)
 
     @torch.no_grad()
-    def _value(self, observations, masks, states):
+    def value_single(self, observations, masks, states):
         batch_size = get_batch_size(observations)
         observations = expand_time_dimension(observations)
         masks = masks.view(batch_size, 1)
 
         _, value, states = self.model(observations, masks, states)
-        return value.squeeze(1).squeeze(-1).detach(), KeepTensor(detach_all(states))
+        return value.squeeze(1).squeeze(-1).detach(), detach_all(states)
 
-    def collect_and_sample(self):
+    def collect_experience(self):
         finished_episodes = ([], [])
         for _ in range(self.num_steps):
             actions, values, action_log_prob, states = self._step(self.rollout_storage.observations, self.rollout_storage.masks, self.rollout_storage.states)
@@ -152,11 +161,16 @@ class A2C(pl.LightningModule):
 
             self.rollout_storage.insert(observations, actions, rewards, terminals, values, states)
 
-        last_values, _ = self._value(self.rollout_storage.observations, self.rollout_storage.masks, self.rollout_storage.states)
+        # Prepare next batch starting point
+        return (len(finished_episodes[0]),) + finished_episodes
+
+    def sample_batch(self):
+        last_values, _ = self.value_single(self.rollout_storage.observations, self.rollout_storage.masks, self.rollout_storage.states)
         batched = self.rollout_storage.batch(last_values, self.gamma)
 
         # Prepare next batch starting point
-        return batched, (len(finished_episodes[0]),) + finished_episodes
+        return batched
+
 
     def training_step(self, batch, batch_idx):
         
