@@ -35,25 +35,23 @@ class UnrealModelBase:
         super().__init__(*args, **kwargs)
         self.gamma = 0.99
         self.entropy_coefficient = 0.001
-        self.value_coefficient = 0.5
+        self.value_coefficient = 0.25
         self.max_gradient_norm = 0.5
-        self.rms_alpha = 0.99
-        self.rms_epsilon = 0.1
 
-        self.learning_rate = 7e-4
+        self.learning_rate = 2e-4
         self.clip_param = 0.1
         self.ppo_epochs = 4
         self.num_minibatches = 4
         self.gae_lambda = 0.95
 
-        self.learning_rate = LinearSchedule(7e-4, 1e-10, max_time_steps)
+        self.learning_rate = LinearSchedule(2e-4, 1e-10, max_time_steps)
 
         # Auxiliary config
         self.pc_gamma = 0.9
-        self.pc_weight = 0.05
+        self.pc_weight = 0.0125
 
-        self.vr_weight = 1.0
-        self.rp_weight = 1.0
+        self.vr_weight = 0.0
+        self.rp_weight = 0.25
 
         # Must be initialized in child class
         self.num_processes = None
@@ -196,7 +194,7 @@ class UnrealModelBase:
             loss, action_loss, value_loss, dist_entropy = 0, 0, 0, 0
             losses = defaultdict(lambda: 0)
             advantages = ppo_batch[1] - ppo_batch[4]
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             for e in range(self.ppo_epochs):
                 generator = split_batches(self.num_minibatches, dict(ppo_batch=ppo_batch + (advantages,), **batch))
                 for x in generator:

@@ -102,10 +102,10 @@ class PPO(SingleTrainer):
         super().__init__(env_kwargs=env_kwargs, model_kwargs=model_kwargs)
 
         self.entropy_coefficient = 0.01
-        self.value_coefficient = 0.5
+        self.value_coefficient = 0.25
         self.max_gradient_norm = 0.5
         self.data_parallel = True
-        self.learning_rate = 7e-4
+        self.learning_rate = 2e-4
         self.clip_param = 0.1
         self.ppo_epochs = 4
         self.num_minibatches = 8
@@ -282,7 +282,7 @@ class PPO(SingleTrainer):
             # observations, returns, actions, masks, old_value_preds
             loss, action_loss, value_loss, dist_entropy = 0, 0, 0, 0
             advantages = args[1] - args[4]
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             for e in range(self.ppo_epochs):
                 generator = split_batches(self.num_minibatches, args + (advantages,))
                 for x in generator:
