@@ -84,7 +84,7 @@ class Trainer(PPO):
         self.gamma = .99
 
     def create_env(self, env):
-        def wrap(env): return gym.wrappers.AtariPreprocessing(env)
+        def wrap(env): return RewardCollector(gym.wrappers.AtariPreprocessing(env, terminal_on_life_loss=True))
         venv = gym.vector.AsyncVectorEnv([lambda: wrap(gym.make(**env))] * self.num_processes)
         self.validation_env = gym.vector.SyncVectorEnv([lambda: wrap(gym.make(**env))])
         return venv
