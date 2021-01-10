@@ -70,4 +70,3 @@ def default_args():
         env_kwargs=dict(id='CartPole-v0'),
         model_kwargs=dict()
     )
-

@@ -5,7 +5,7 @@ import gym
 
 from deep_rl import register_trainer
 from deep_rl.model import TimeDistributed, Flatten
-from deep_rl.actor_critic import A2C
+from deep_rl.actor_critic import PPO
 from deep_rl.actor_critic.environment import create_unreal_env
 from gym.vector import SyncVectorEnv, AsyncVectorEnv
 # from baselines.common.atari_wrappers import NoopResetEnv, MaxAndSkipEnv, EpisodicLifeEnv, ClipRewardEnv, WarpFrame, ScaledFloatFrame
@@ -76,11 +76,11 @@ class LSTMModel(nn.Module):
 
 
 @register_trainer(max_time_steps=10e6, validation_period=None,  episode_log_interval=10, save=False)
-class Trainer(A2C):
+class Trainer(PPO):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_processes = 16
-        self.num_steps = 20
+        self.num_steps = 128
         self.gamma = .99
 
     def create_env(self, env):
