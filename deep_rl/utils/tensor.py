@@ -4,6 +4,8 @@ import dataclasses
 
 
 def to_device(value, device):
+    if value is None:
+        return None
     if isinstance(value, torch.Tensor):
         return value.to(device)
     if isinstance(value, list):

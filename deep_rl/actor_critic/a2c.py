@@ -46,7 +46,7 @@ class RolloutStorage:
     def states(self):
         return self._states
 
-    def insert(self, observations, actions, rewards, terminals, values, states):
+    def insert(self, observations, actions, rewards, terminals, values, action_log_prob, states):
         self._batch.append(to_device((self._observations, actions, values, rewards, terminals), torch.device('cpu')))
         self._observations = observations
         self._terminals = terminals
@@ -83,11 +83,11 @@ class RolloutStorage:
         return result
 
 
-class A2C(Trainer):
+class PAAC(Trainer):
     DEFAULT_NAME = 'paac'
     RolloutStorage = RolloutStorage
 
-    def __init__(self, model_fn, env_fn,
+    def __init__(self, model_fn, env_fn, *,
                  num_agents: int = 16,
                  num_steps: int = 128,
                  learning_rate: float = 7e-4,
@@ -171,7 +171,7 @@ class A2C(Trainer):
                     episode_lengths.append(info['episode']['l'])
                     episode_returns.append(info['episode']['r'])
 
-            self.rollout_storage.insert(observations, actions, rewards, terminals, values, states)
+            self.rollout_storage.insert(observations, actions, rewards, terminals, values, action_log_prob, states)
 
         # Prepare next batch starting point
         return torch.tensor(episode_lengths, dtype=torch.int32), torch.tensor(episode_returns, dtype=torch.float32)
