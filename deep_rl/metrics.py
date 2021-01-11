@@ -1,5 +1,5 @@
 import torch
-from collections import OrderedDict
+from collections import OrderedDict, MutableMapping
 
 
 def to_tensor(value, dtype=torch.float32):
@@ -20,6 +20,9 @@ class Metric:
             return self.update_state(*args, **kwargs)
         else:
             return self.report()
+
+    def __format__(self, *args, **kwargs):
+        return format(self(), *args, **kwargs)
 
 
 class Mean(Metric):
@@ -66,14 +69,13 @@ class LastValue(AccumulatedMetric):
         return value
 
 
-class MetricsContext:
+class MetricsContext(MutableMapping):
     def __init__(self, **kwargs):
+        super().__init__()
         self.metrics = OrderedDict(**kwargs)
 
     def log(self, name, *args, **kwargs):
-        if name not in self.metrics:
-            self.metrics[name] = Mean()
-        self.metrics[name](*args, **kwargs)
+        self[name](*args, **kwargs)
 
     def collect(self, is_distributed=False):
         vals = {k: val() for k, val in self.metrics.items()}
@@ -92,3 +94,20 @@ class MetricsContext:
             for k, val in zip(distributed_keys, values):
                 vals[k] = val
         return vals
+
+    def __len__(self):
+        return len(self.metrics)
+
+    def __iter__(self):
+        return iter(self.metrics)
+
+    def __getitem__(self, idx):
+        if idx not in self.metrics:
+            self.metrics[idx] = Mean()
+        return self.metrics[idx]
+
+    def __delitem__(self, name):
+        del self.metrics[name]
+
+    def __setitem__(self, name, value):
+        self.metrics[name] = value

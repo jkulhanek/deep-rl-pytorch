@@ -7,6 +7,8 @@ from .metrics import MetricWriter
 from .util import DefaultOrderedDict
 from .console_util import print_table
 
+
+
 class SaveWrapper(AbstractTrainerWrapper):
     def __init__(self, *args, model_root_directory = None, saving_period = 10000, **kwargs):
         super().__init__(*args, **kwargs)
@@ -187,7 +189,7 @@ class EpisodeLoggerWrapper(AbstractTrainerWrapper):
                 epend > 0:
 
             # Run validation
-            self.run_validation(**kwargs)   
+            self.run_validation(**kwargs)
 
         return (tdiff, episode_end, stats)
 
