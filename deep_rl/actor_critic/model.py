@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 
-from ..model import TimeDistributed, Flatten
+from deep_rl.utils.model import TimeDistributed, Flatten
 from ..common.pytorch import forward_masked_rnn_transposed
 
 
@@ -263,7 +263,7 @@ class UnrealModel(nn.Module):
         return [policy_logits, critic, states]
 
     def _forward_base(self, inputs, masks, states):
-        observations, last_reward_action = inputs
+        observations, last_reward_action = inputs['observation'], inputs['action_reward']
         features = self.conv_base(observations)
         features = self.conv_merge(features)
         features = torch.cat((features, last_reward_action,), dim=2)
@@ -289,7 +289,7 @@ class UnrealModel(nn.Module):
         self.rp = nn.Linear(9 ** 2 * 32 * 3, 3)
 
     def reward_prediction(self, inputs):
-        observations, _ = inputs
+        observations = inputs['observation']
         features = self.conv_base(observations)
         features = features.view(features.size()[0], -1)
         features = self.rp(features)
@@ -307,7 +307,3 @@ class UnrealModel(nn.Module):
         features, states = self._forward_base(inputs, masks, states)
         critic = self.critic(features)
         return critic, states
-
-    @property
-    def output_names(self):
-        return ('policy_logits', 'value', 'states')

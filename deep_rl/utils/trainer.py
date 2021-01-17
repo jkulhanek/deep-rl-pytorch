@@ -147,6 +147,14 @@ class Trainer:
         self.metrics[name](value)
 
     def _setup(self, stage):
+        # Setup schedules
+        for schedule in self.schedules.values():
+            if hasattr(schedule, 'total_iterations') and schedule.total_iterations is None:
+                if self.max_time_steps is not None:
+                    schedule.total_iterations = self.max_time_steps
+                else:
+                    raise RuntimeError(f'Schedule {schedule} does not have the max_time_steps set up.')
+
         if self.model is None:
             self.model = self.model_fn()
 

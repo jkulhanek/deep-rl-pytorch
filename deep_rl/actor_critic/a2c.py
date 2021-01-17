@@ -111,10 +111,10 @@ class PAAC(Trainer):
             agents_per_process = self.num_agents // self.world_size
             self.env = TorchWrapper(AsyncVectorEnv([partial(self.env_fn, rank=i) for i in range(global_rank, global_rank + agents_per_process)]))
             if hasattr(self.model, 'initial_states'):
-                get_initial_states = lambda *args: to_device(self.model.initial_states(*args), self.current_device)
+                self._get_initial_states = lambda x=agents_per_process: to_device(self.model.initial_states(x), self.current_device)
             else:
-                get_initial_states = lambda *args: None
-            self.rollout_storage = self.RolloutStorage(agents_per_process, self.env.reset(), get_initial_states(agents_per_process))
+                self._get_initial_states = lambda x: None
+            self.rollout_storage = self.RolloutStorage(agents_per_process, self.env.reset(), self._get_initial_states(agents_per_process))
         super().setup(stage)
 
     def compute_loss(self, batch: RolloutBatch) -> Tuple[torch.Tensor, Dict]:
@@ -171,13 +171,16 @@ class PAAC(Trainer):
                     episode_lengths.append(info['episode']['l'])
                     episode_returns.append(info['episode']['r'])
 
-            self.rollout_storage.insert(observations, actions, rewards, terminals, values, action_log_prob, states)
+            self.store_experience(observations, actions, rewards, terminals, values, action_log_prob, states)
 
         # Prepare next batch starting point
         return torch.tensor(episode_lengths, dtype=torch.int32), torch.tensor(episode_returns, dtype=torch.float32)
 
+    def store_experience(self, *args):
+        self.rollout_storage.insert(*args)
+
     @torch.no_grad()
-    def sample_experience_batch(self):
+    def sample_experience_batch(self) -> RolloutBatch:
         last_values, _ = self.value_single(to_device(self.rollout_storage.observations, self.current_device), self.rollout_storage.masks.to(self.current_device), self.rollout_storage.states)
         batched = self.rollout_storage.batch(last_values, self.gamma)
 

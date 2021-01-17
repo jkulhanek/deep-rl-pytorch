@@ -57,7 +57,7 @@ def pixel_control_loss(observations, actions, action_values, gamma=0.9, cell_siz
         last_rewards = action_values[:, -1].max(1, keepdim=True)[0]
         for i in reversed(range(T)):
             previous_rewards = last_rewards if i + 1 == T else pseudo_rewards[:, i + 1]
-            pseudo_rewards[:, i].add_(gamma, previous_rewards)
+            pseudo_rewards[:, i].add_(previous_rewards, alpha=gamma)
 
     q_actions = actions.view(*batch_shape + (1, 1, 1)).repeat(1, 1, 1, action_value_shape[3], action_value_shape[4])
     q_actions = torch.gather(action_values[:, :-1], 2, q_actions)
@@ -93,14 +93,14 @@ def value_loss(values, rewards, gamma):
     return F.mse_loss(values[:, :-1], cummulative_reward)
 
 
-class UnrealEnvBaseWrapper(gym.Wrapper):
+class UnrealEnvWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
         self.last_action_reward = None
-        self.observation_space = gym.spaces.Tuple((
-            env.observation_space,
-            gym.spaces.Box(0.0, 1.0, (env.action_space.n + 1,), dtype=np.float32)
-        ))
+        self.observation_space = gym.spaces.Dict({
+            'observation': env.observation_space,
+            'action_reward': gym.spaces.Box(0.0, 1.0, (env.action_space.n + 1,), dtype=np.float32)
+        })
 
     def reset(self):
         self.last_action_reward = np.zeros(self.action_space.n + 1, dtype=np.float32)
@@ -114,4 +114,4 @@ class UnrealEnvBaseWrapper(gym.Wrapper):
         return self.observation(observation), reward, done, stats
 
     def observation(self, observation):
-        return (observation, self.last_action_reward)
+        return dict(observation=observation, action_reward=self.last_action_reward)

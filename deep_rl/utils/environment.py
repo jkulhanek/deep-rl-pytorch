@@ -1,6 +1,46 @@
 import gym
+import gym.spaces
 import torch
 import numpy as np
+from functools import partial
+
+
+class TransposeWrapper(gym.ObservationWrapper):
+    def __init__(self, env, transpose=[2, 0, 1]):
+        super().__init__(env)
+        self.op = transpose
+        self.observation_space = self.transpose_space(self.observation_space)
+
+    def transpose_space(self, space):
+        if space.__class__.__name__ == 'Box':
+            if len(space.shape) == 3:
+                obs_shape = space.shape
+                return gym.spaces.Box(
+                    space.low[0, 0, 0],
+                    space.high[0, 0, 0],
+                    [
+                        obs_shape[self.op[0]],
+                        obs_shape[self.op[1]],
+                        obs_shape[self.op[2]]],
+                    dtype=space.dtype)
+            return space
+        elif space.__class__.__name__ == 'Tuple':
+            return gym.spaces.Tuple(tuple(map(self.transpose_space, space.spaces)))
+        else:
+            raise Exception('Environment type is not supported')
+
+    def transpose_observation(self, ob, space):
+        if space.__class__.__name__ == 'Box':
+            if len(space.shape) == 3:
+                return ob if ob is None else np.transpose(ob, axes=self.op)
+            return ob
+        elif space.__class__.__name__ == 'Tuple':
+            return tuple(map(lambda x: self.transpose_observation(*x), zip(ob, space.spaces)))
+        else:
+            raise Exception('Environment type is not supported')
+
+    def observation(self, ob):
+        return self.transpose_observation(ob, self.env.observation_space)
 
 
 class TorchWrapper(gym.vector.VectorEnvWrapper):
@@ -63,18 +103,21 @@ class RewardCollector(gym.Wrapper):
             info['episode'] = epinfo
 
 
-def with_collect_reward_info(env_fn):
+def with_wrapper(env_fn, Wrapper):
     def _env_fn(*args, **kwargs):
         env = env_fn(*args, **kwargs)
         has_collector = False
         current_env = env
         while hasattr(current_env, 'env'):
-            if current_env.__class__.__name__ == 'RewardCollector':
+            if isinstance(current_env, Wrapper):
                 has_collector = True
             if current_env == env.env:
                 break
             current_env = env.env
         if not has_collector:
-            env = RewardCollector(env)
+            env = Wrapper(env)
         return env
     return _env_fn
+
+
+with_collect_reward_info = partial(with_wrapper, Wrapper=RewardCollector)
