@@ -1,34 +1,44 @@
-from abc import abstractclassmethod
+from functools import partial
 import torch
-import torch.nn as nn
-import numpy as np
+import gym
+from torch import nn
+import torch.multiprocessing as mp
 
-from ..common import MetricContext
-from ..core import Schedule
-from ..utils import pytorch_call, KeepTensor, detach_all
-from ..common.multiprocessing import ProcessServerTrainer
-from ..common.util import serialize_function
-from ..optim.shared_rmsprop import SharedRMSprop
+import time
+import tqdm
 
+from deep_rl.utils.optim.shared_rmsprop import SharedRMSprop
+from deep_rl.utils.trainer import Trainer, ScheduledMixin
+from deep_rl.utils.environment import with_collect_reward_info, TorchWrapper
+from deep_rl.utils import to_device
+from deep_rl.utils.tensor import get_batch_size
+from deep_rl import metrics
 
-def batch_observations(observations):
-    if isinstance(observations[0], tuple):
-        return tuple(batch_observations(list(map(list, observations))))
-    elif isinstance(observations[0], list):
-        return list(map(lambda *x: batch_observations(x), *observations))
-    elif isinstance(observations[0], dict):
-        return {key: batch_observations([o[key] for o in observations]) for key in observations[0].keys()}
-    else:
-        return np.stack(observations, axis=0)
+from .a2c import PAAC
 
 
-def expand_time_dimension(inputs):
-    if isinstance(inputs, list):
-        return [expand_time_dimension(x) for x in inputs]
-    elif isinstance(inputs, tuple):
-        return tuple(expand_time_dimension(list(inputs)))
-    else:
-        return inputs.unsqueeze(0)
+class CloudpickleWrapper(object):
+    """
+    Uses cloudpickle to serialize contents (otherwise multiprocessing tries to use pickle)
+    """
+
+    def __init__(self, x):
+        self.x = x
+
+    def __call__(self, *args, **kwargs):
+        return self.x(*args, **kwargs)
+
+    def __getstate__(self):
+        import cloudpickle
+        return cloudpickle.dumps(self.x)
+
+    def __setstate__(self, ob):
+        import pickle
+        self.x = pickle.loads(ob)
+
+
+def serialize_function(fun):
+    return CloudpickleWrapper(fun)
 
 
 def ensure_shared_grads(model, shared_model):
@@ -39,269 +49,204 @@ def ensure_shared_grads(model, shared_model):
         shared_param._grad = param.grad
 
 
-class RolloutStorage:
-    def __init__(self, initial_observation, initial_states=[]):
-        self._terminal = self._last_terminal = False
-        self._states = self._last_states = initial_states
-        self._observation = self._last_observation = initial_observation
-        self._batch = []
+class A3C(PAAC):
+    DEFAULT_NAME = 'a3c'
 
-    def _transform_observation(self, observation):
-        if isinstance(observation, np.ndarray):
-            if observation.dtype == np.uint8:
-                return observation.astype(np.float32) / 255.0
+    def __init__(self, model_fn, env_fn, *,
+                 num_agents: int = 16,
+                 num_steps: int = 128,
+                 rms_alpha: float = 0.99,
+                 rms_epsilon: float = 1e-5,
+                 learning_rate: float = 7e-4,
+                 gamma: float = 0.99,
+                 value_coefficient: float = 1.0,
+                 entropy_coefficient: float = 0.01,
+                 max_grad_norm: float = 40.0, **kwargs):
+        # The parent PAAC is used only to copy useful methods
+        Trainer.__init__(self, model_fn, learning_rate=learning_rate, **kwargs)
+        self.num_agents = num_agents
+        self.num_steps = num_steps
+        self.rms_alpha = rms_alpha
+        self.rms_epsilon = rms_epsilon
+        self.max_grad_norm = max_grad_norm
+        self.value_coefficient = value_coefficient
+        self.entropy_coefficient = entropy_coefficient
+        self.gamma = gamma
+        self.env_fn = with_collect_reward_info(env_fn)
+        self._is_worker = False
+
+    def setup(self, stage):
+        if stage == 'fit' and not self._is_worker:
+            assert self.world_size == 1, 'A3C does not support distributed training'
+            self.model = self.model.share_memory()
+        if stage == 'fit' and self._is_worker:
+            self.model = self.model_fn().to(self.current_device)
+            self.env = TorchWrapper(gym.vector.SyncVectorEnv([partial(self.env_fn, self.global_rank)]))
+            self._tstart = time.time()
+            if hasattr(self.model, 'initial_states'):
+                self._get_initial_states = lambda x: to_device(self.model.initial_states(x), self.current_device)
             else:
-                return observation.astype(np.float32)
-        elif isinstance(observation, list):
-            return [self._transform_observation(x) for x in observation]
-        elif isinstance(observation, tuple):
-            return tuple([self._transform_observation(x) for x in observation])
+                self._get_initial_states = lambda x: None
+            self.rollout_storage = self.RolloutStorage(1, self.env.reset(), self._get_initial_states(1))
+            self.metrics = metrics.MetricsContext(**{
+                'return': metrics.Mean(),
+                'updates': metrics.AccumulatedMetric(lambda x, y: x + y),
+                'fps': metrics.LastValue(),
+                'episodes': metrics.Mean(is_distributed=False)})
+
+    def configure_optimizers(self, model):
+        return SharedRMSprop(self.model.parameters(), self.learning_rate, self.rms_alpha, self.rms_epsilon).share_memory()
 
     @property
-    def observation(self):
-        return self._transform_observation(self._observation)
+    def current_device(self):
+        return torch.device('cpu')
 
-    @property
-    def terminal(self):
-        return float(self._terminal)
-
-    @property
-    def mask(self):
-        return 1 - self._terminal
-
-    @property
-    def states(self):
-        return self._states
-
-    def insert(self, observation, action, reward, terminal, value, states):
-        self._batch.append((self._observation, action, value, reward, terminal))
-        self._observation = observation
-        self._terminal = terminal
-        self._states = states
-
-    def batch(self, last_value, gamma):
-        # Batch in time dimension
-        b_actions, b_values, b_rewards, b_terminals = [np.stack([b[i] for b in self._batch], axis=0) for i in range(1, 5)]
-        b_observations = batch_observations([o[0] for o in self._batch])
-
-        # Compute cummulative returns
-        last_returns = (1.0 - b_terminals[-1]) * last_value
-        b_returns = np.concatenate([np.zeros_like(b_rewards), np.array([last_returns], dtype=np.float32)], axis=0)
-        for n in reversed(range(len(self._batch))):
-            b_returns[n] = b_rewards[n] + \
-                gamma * (1.0 - b_terminals[n]) * b_returns[n + 1]
-
-        # Compute RNN reset masks
-        b_masks = (1 - np.concatenate([np.array([self._last_terminal], dtype=np.bool), b_terminals[:-1]], axis=0))
-        result = (
-            self._transform_observation(b_observations),
-            b_returns[:-1].astype(np.float32),
-            b_actions,
-            b_masks.astype(np.float32),
-            self._last_states
-        )
-
-        self._last_observation = self._observation
-        self._last_states = self._states
-        self._last_terminal = self._terminal
-        self._batch = []
-        return result
-
-
-class A3CWorker:
-    def __init__(self, shared_model, optimizer, create_model_fn):
-        self.shared_model = shared_model
-        self.optimizer = optimizer
-        self.create_model_fn = create_model_fn
-        self.create_env = None
-
-        self._global_t = None
-        self._is_stopped = None
-
-        self.entropy_coefficient = 0.01
-        self.value_coefficient = 0.5
-        self.max_gradient_norm = 40.0
-        self.num_steps = 5
-        self.gamma = 0.99
-        self.schedules = dict()
-
-    def initialize(self):
-        self.env = self.create_env()
-        self.model = self.create_model_fn(self)()
-        self._build_graph()
-        self.rollouts = RolloutStorage(self.env.reset(), self._initial_states(1))
-
-    def process(self, context, mode='train', **kwargs):
-        for s in self.schedules.values():
-            s.step(self._global_t)
-        metric_context = MetricContext()
-        if mode == 'train':
-            return self._process_train(context, metric_context)
-        if mode == 'validation':
-            return self._process_validation(context, metric_context)
-        else:
-            raise Exception('Mode not supported')
-
-    def _sample_experience_batch(self):
-        finished_episodes = ([], [])
-        for _ in range(self.num_steps):
-            states = self.rollouts.states if self.rollouts.mask else self._initial_states(1)
-            action, value, action_log_prob, states = self._step(self.rollouts.observation, states)
+    @torch.no_grad()
+    def collect_experience(self):
+        episode_lengths = []
+        episode_returns = []
+        for n in range(self.num_steps):
+            actions, values, action_log_prob, states = self.step_single(to_device(self.rollout_storage.observations, self.current_device),
+                                                                        self.rollout_storage.masks.to(self.current_device), self.rollout_storage.states)
+            actions = actions.cpu()
+            values = values.cpu()
+            action_log_prob = action_log_prob.cpu()
 
             # Take actions in env and look the results
-            observation, reward, terminal, info = self.env.step(action)
+            observations, rewards, terminals, infos = self.env.step(actions)
 
             # Collect true rewards
-            if 'episode' in info.keys():
-                finished_episodes[0].append(info['episode']['l'])
-                finished_episodes[1].append(info['episode']['r'])
+            for info in infos:
+                if 'episode' in info.keys():
+                    episode_lengths.append(info['episode']['l'])
+                    episode_returns.append(info['episode']['r'])
 
-            if terminal:
-                observation = self.env.reset()
-
-            self.rollouts.insert(observation, action, reward, terminal, value, states)
-
-            if terminal:
-                # End after episode env
-                # Improves lstm performance
+            self.store_experience(observations, actions, rewards, terminals, values, action_log_prob, states)
+            if terminals.sum().item() > 0:
                 break
 
-        states = self.rollouts.states if self.rollouts.mask else self._initial_states(1)
-        last_values, _ = self._value(self.rollouts.observation, states)
-        batched = self.rollouts.batch(last_values, self.gamma)
-
         # Prepare next batch starting point
-        return batched, (len(finished_episodes[0]),) + finished_episodes
+        return n + 1, torch.tensor(episode_lengths, dtype=torch.int32), torch.tensor(episode_returns, dtype=torch.float32)
 
-    def _process_train(self, context, metric_context):
-        self.model.load_state_dict(self.shared_model.state_dict())
-        batch, report = self._sample_experience_batch()
-        loss, value_loss, action_loss, dist_entropy = self._train(*batch)
+    def training_step(self, batch):
+        loss, metrics = self.compute_loss(batch)
+        for k, v in metrics.items():
+            self.log(k, v.item())
+        self.log('loss', loss.item())
 
-        metric_context.add_cummulative('updates', 1)
-        metric_context.add_scalar('loss', loss)
-        metric_context.add_scalar('value_loss', value_loss)
-        metric_context.add_scalar('action_loss', action_loss)
-        metric_context.add_scalar('entropy', dist_entropy)
-        return self.num_steps, report, metric_context
+        # Optimize
+        self.optimizer.zero_grad()
+        loss.backward()
+        if self.max_grad_norm > 0.0:
+            grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+            self.log('grad_norm', grad_norm)
+        ensure_shared_grads(self.model, self.shared_model)
+        self.optimizer.step()
 
-    def _process_validation(self, context, metric_context):
-        self.model.load_state_dict(self.shared_model.state_dict())
-        batch, report = self._sample_experience_batch()
-        return self.num_steps, report, metric_context
+    def _worker_run(self):
+        num_agents, self.num_agents = self.num_agents, 1
+        self.setup('fit')
+        self.num_agents = num_agents
+        while True:
+            self.model.load_state_dict(self.shared_model.state_dict())
+            _, episode_lengths, returns = self.collect_experience()
+            batch = self.sample_experience_batch()
 
-    def _build_graph(self):
-        model = self.model
-        if hasattr(model, 'initial_states'):
-            self._initial_states = getattr(model, 'initial_states')
-        else:
-            self._initial_states = lambda _: []
+            t_diff = get_batch_size(batch, axis=1)
+            batch = batch.to(self.current_device)
 
-        main_device = torch.device('cpu')  # TODO: add GPU support
-        model.train()
+            # Update learning rate with scheduler
+            if 'learning_rate' in self.schedules:
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = self.learning_rate
 
-        # Build train and act functions
-        self._train = self._build_train(model, main_device)
+            self.training_step(batch)
+            self.metrics['return'](returns)
+            self.metrics['episode_length'](episode_lengths)
+            self.metrics['episodes'](len(returns))
+            self.metrics['updates'](1)
+            self.metrics['fps'](self.global_t / (time.time() - self._tstart))
+            self.shared_queue.put((t_diff, self.metrics.collect(full_stats=True)))
 
-        @pytorch_call(main_device)
-        def step(observations, states):
-            with torch.no_grad():
-                observations = expand_time_dimension(observations)
-                policy_logits, value, states = model(observations, states)
-                dist = torch.distributions.Categorical(logits=policy_logits)
-                action = dist.sample()
-                action_log_probs = dist.log_prob(action)
-                return action.squeeze(0).item(), value.squeeze(0).squeeze(-1).item(), action_log_probs.squeeze(0).item(), KeepTensor(detach_all(states))
+            # Exit gracefully
+            if self.max_time_steps is not None and self.global_t >= self.max_time_steps:
+                break
+            if self.max_episodes is not None and self.global_episodes >= self.max_episodes:
+                break
 
-        @pytorch_call(main_device)
-        def value(observations, states):
-            with torch.no_grad():
-                observations = expand_time_dimension(observations)
-                _, value, states = model(observations, states)
-                return value.squeeze(0).squeeze(-1).detach(), KeepTensor(detach_all(states))
+    @property
+    def global_t(self):
+        return self.shared_global_t.value
 
-        self._step = step
-        self._value = value
-        self.main_device = main_device
-        return model
+    @global_t.setter
+    def global_t(self, value):
+        assert self.global_rank == 0
+        if hasattr(self, 'shared_global_t'):
+            self.shared_global_t.value = value
 
-    def _build_train(self, model, main_device):
-        optimizer = self.optimizer
+    def _get_worker_state_dict(self):
+        state_dict = self.state_dict()
+        del state_dict['optimizer']
+        del state_dict['model']
+        del state_dict['loggers']
+        state_dict['optimizer'] = self.optimizer
+        state_dict['shared_model'] = self.model
+        state_dict['shared_global_t'] = self.shared_global_t
+        state_dict['shared_queue'] = self.shared_queue
+        state_dict['model_fn'] = serialize_function(self.model_fn)
+        state_dict['env_fn'] = serialize_function(self.env_fn)
+        return state_dict
 
-        @pytorch_call(main_device)
-        def train(observations, returns, actions, masks, states=[]):
-            if isinstance(self.learning_rate, Schedule):
-                lr = self.learning_rate()
-                # Update learning rate
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
+    def fit(self):
+        model_fn = self.model_fn
+        self.model_fn = lambda: model_fn().share_memory()
+        self._setup('fit')
+        self.model_fn = model_fn
 
-            policy_logits, value, _ = model(observations, states)
+        # Initialize globals
+        smp = mp.get_context('spawn')
+        self.shared_queue = smp.SimpleQueue()
+        self.shared_global_t = smp.Value('i', 0)
+        state_dict = self._get_worker_state_dict()
 
-            dist = torch.distributions.Categorical(logits=policy_logits)
-            action_log_probs = dist.log_prob(actions)
-            dist_entropy = dist.entropy().mean()
+        # Spawn processes
+        ctx = torch.multiprocessing.spawn(_worker_run, args=(self.__class__, state_dict), nprocs=self.num_agents, join=False)
+        progress = tqdm.tqdm(desc='training', total=self.max_time_steps)
+        while not ctx.join(0.02):
+            while not self.shared_queue.empty():
+                message = self.shared_queue.get()
+                delta_t, metrics = message
+                for m, v in metrics.items():
+                    if isinstance(v, tuple):
+                        self.metrics[m](*v)
+                    else:
+                        self.metrics[m](v)
+                self.shared_global_t.value += delta_t
+                progress.update(delta_t)
+                postfix = 'return: {return:.2f}'.format(**self.metrics)
+                if 'loss' in self.metrics:
+                    postfix += ', loss: {loss:.4f}'.format(**self.metrics)
+                progress.set_postfix_str(postfix)
 
-            # Compute losses
-            advantages = returns - value.squeeze(-1)
-            value_loss = advantages.pow(2).mean()
-            action_loss = -(advantages.detach() * action_log_probs).mean()
-            loss = value_loss * self.value_coefficient + \
-                action_loss - \
-                dist_entropy * self.entropy_coefficient
+                if self.global_t - self._last_save_step >= self.save_interval:
+                    self.save()
+                    self._last_save_step = self.global_t
+                if self.global_t - self._last_log_step >= self.log_interval:
+                    self._collect_logs()
+                    self._last_log_step = self.global_t
+        progress.close()
+        self.save()
 
-            # Optimize
-            optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), self.max_gradient_norm)
-            ensure_shared_grads(model, self.shared_model)
-            optimizer.step()
-
-            return loss.item(), action_loss.item(), value_loss.item(), dist_entropy.item()
-
-        return train
+    @classmethod
+    def build_worker(cls, state_dict):
+        self = cls.__new__(cls)
+        ScheduledMixin.__init__(self)
+        self._is_worker = True
+        self.load_state_dict(state_dict)
+        return self
 
 
-class A3C(ProcessServerTrainer):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.gamma = 0.99
-        self.num_steps = 20
-        self.entropy_coefficient = 0.01
-        self.value_coefficient = 0.5
-        self.max_gradient_norm = 40.0
-        self.learning_rate = 0.0001
-        self.rms_alpha = 0.99
-        self.rms_epsilon = 1e-5
-        self.log_dir = None
-
-        self.allow_gpu = True
-
-    @abstractclassmethod
-    def create_model(self, **model_kwargs):
-        pass
-
-    def _initialize(self, **model_kwargs):
-        if hasattr(self, 'schedules') and 'learning_rate' in self.schedules:
-            raise Exception('Learning rate schedule is not yet implemented for a3c')
-
-        self.model = self.create_model(**model_kwargs).share_memory()
-        self.optimizer = SharedRMSprop(self.model.parameters(), self.learning_rate, self.rms_alpha, self.rms_epsilon).share_memory()
-        super()._initialize(**model_kwargs)
-        return self.model
-
-    def create_worker(self, id):
-        model_fn = serialize_function(self.create_model, **self._model_kwargs)
-        worker = A3CWorker(self.model, self.optimizer, model_fn)
-        worker.gamma = self.gamma
-        worker.num_steps = self.num_steps
-        worker.entropy_coefficient = self.entropy_coefficient
-        worker.value_coefficient = self.value_coefficient
-        worker.max_gradient_norm = self.max_gradient_norm
-        worker.allow_gpu = self.allow_gpu
-        worker.learning_rate = self.learning_rate
-        for name, schedule in self.schedules.items():
-            setattr(worker, name, schedule)
-        worker.schedules = self.schedules
-        return worker
+def _worker_run(global_rank, cls, state_dict):
+    algo = cls.build_worker(state_dict)
+    algo.global_rank = global_rank
+    algo._worker_run()

@@ -27,7 +27,7 @@ def get_batch_size(x, axis=0):
         return get_batch_size(x[0], axis)
     if isinstance(x, dict):
         return get_batch_size(next(iter(x.values())), axis)
-    if isinstance(dataclasses.is_dataclass(x)):
+    if dataclasses.is_dataclass(x):
         return get_batch_size(x.__dict__, axis)
     raise ValueError(f'Value of type {type(x)} is not supported')
 

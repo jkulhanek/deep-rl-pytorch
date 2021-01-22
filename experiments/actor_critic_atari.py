@@ -1,17 +1,17 @@
-from torch import nn
-import torch
-from deep_rl.common.pytorch import forward_masked_rnn_transposed
-
-from deep_rl.utils.model import TimeDistributed, Flatten
-from deep_rl import actor_critic
-from deep_rl.utils import logging
-from deep_rl.utils.environment import TransposeWrapper
-from deep_rl.actor_critic.model import UnrealModel
-# from baselines.common.atari_wrappers import NoopResetEnv, MaxAndSkipEnv, EpisodicLifeEnv, ClipRewardEnv, WarpFrame, ScaledFloatFrame
-
-from functools import partial
-import argparse
 import gym
+import argparse
+from functools import partial
+from deep_rl.actor_critic.model import UnrealModel
+from deep_rl.utils.environment import TransposeWrapper
+from deep_rl.utils import logging
+from deep_rl import actor_critic
+from deep_rl.utils.model import TimeDistributed, Flatten
+from deep_rl.common.pytorch import forward_masked_rnn_transposed
+import torch
+from torch import nn
+
+
+# from baselines.common.atari_wrappers import NoopResetEnv, MaxAndSkipEnv, EpisodicLifeEnv, ClipRewardEnv, WarpFrame, ScaledFloatFrame
 
 
 class LSTMModel(nn.Module):

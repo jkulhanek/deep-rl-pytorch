@@ -47,7 +47,34 @@ def find_save_dir(path):
     return os.path.join(path, f'v{i}')
 
 
-class Trainer:
+class ScheduledMixin:
+    def __init__(self):
+        object.__setattr__(self, 'schedules', dict())
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name in self.schedules:
+            self.schedules.pop(name)
+        if isinstance(value, Schedule):
+            self.schedules[name] = value
+
+    def __getattribute__(self, name):
+        value = super().__getattribute__(name)
+        if isinstance(value, Schedule):
+            if not hasattr(self, 'global_t'):
+                raise Exception('Schedules are supported only for classes with global_t property')
+            value.step(getattr(self, 'global_t'))
+            return value()
+        else:
+            return value
+
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if name in self.schedules:
+            self.schedules.pop(name)
+
+
+class Trainer(ScheduledMixin):
     DEFAULT_NAME = 'default'
 
     def __init__(self, model_fn,
@@ -60,7 +87,7 @@ class Trainer:
                  log_interval: int = 1000,
                  num_gpus: int = None,
                  max_episodes: int = None):
-        object.__setattr__(self, 'schedules', dict())
+        super().__init__()
         self.model_fn = model_fn
         self.model, self.optimizer = None, None
         self.global_rank = 0
@@ -170,10 +197,11 @@ class Trainer:
             if self.optimizer is None:
                 self.optimizer = self.configure_optimizers(self.model)
             self._tstart = time.time()
-            self.metrics = metrics.MetricsContext(
-                updates=metrics.AccumulatedMetric(lambda x, y: x + y),
-                fps=metrics.LastValue(),
-                episodes=metrics.Mean(is_distributed=True))
+            self.metrics = metrics.MetricsContext(**{
+                'return': metrics.Mean(),
+                'updates': metrics.AccumulatedMetric(lambda x, y: x + y),
+                'fps': metrics.LastValue(),
+                'episodes': metrics.Mean(is_distributed=True)})
             self._last_save_step = 0
             self._last_log_step = 0
             self.save_dir = None
@@ -198,28 +226,6 @@ class Trainer:
     def setup(self, stage):
         pass
 
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        if name in self.schedules:
-            self.schedules.pop(name)
-        if isinstance(value, Schedule):
-            self.schedules[name] = value
-
-    def __getattribute__(self, name):
-        value = super().__getattribute__(name)
-        if isinstance(value, Schedule):
-            if not hasattr(self, 'global_t'):
-                raise Exception('Schedules are supported only for classes with global_t property')
-            value.step(getattr(self, 'global_t'))
-            return value()
-        else:
-            return value
-
-    def __delattr__(self, name):
-        super().__delattr__(name)
-        if name in self.schedules:
-            self.schedules.pop(name)
-
     def collect_experience(self):
         raise NotImplementedError()
 
@@ -231,3 +237,45 @@ class Trainer:
 
     def training_step(self):
         raise NotImplementedError()
+
+    def state_dict(self):
+        state_dict = dict()
+
+        def serialize_value(obj):
+            if hasattr(obj, 'state_dict'):
+                obj = obj.state_dict()
+            if isinstance(obj, tuple):
+                return tuple(map(serialize_value, obj))
+            elif isinstance(obj, list):
+                return list(map(serialize_value, obj))
+            elif isinstance(obj, dict):
+                return {k: serialize_value(v) for k, v in obj.items()}
+            return obj
+
+        for k, v in self.__dict__.items():
+            if k.startswith('_'):
+                continue
+            if k in ['schedules', 'metrics', 'model_fn', 'env_fn']:
+                continue
+            if k in self.schedules:
+                v = self.schedules[k]
+            state_dict[k] = v
+        return serialize_value(state_dict)
+
+    def load_state_dict(self, state_dict):
+        def deserialize_value(obj):
+            if isinstance(obj, dict):
+                if '_schedule_class' in obj:
+                    return Schedule.from_state_dict(obj)
+                return {k: deserialize_value(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return list(map(deserialize_value, obj))
+            elif isinstance(obj, tuple):
+                return tuple(map(deserialize_value, obj))
+            return obj
+        for k, v in state_dict.items():
+            if hasattr(self, k) and hasattr(getattr(self, k), 'load_state_dict') and (not isinstance(v, dict) or '_schedule_class' not in v):
+                getattr(self, k).load_state_dict(v)
+            else:
+                setattr(self, k, deserialize_value(v))
+        return self

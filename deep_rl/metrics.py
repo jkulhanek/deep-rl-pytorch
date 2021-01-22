@@ -15,11 +15,11 @@ class Metric:
         self.is_distributed = is_distributed
         self.reset_states()
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, full_stats=False, **kwargs):
         if len(args) > 0:
             return self.update_state(*args, **kwargs)
         else:
-            return self.report()
+            return self.report(full_stats=full_stats)
 
     def __format__(self, *args, **kwargs):
         return format(self(), *args, **kwargs)
@@ -42,7 +42,9 @@ class Mean(Metric):
         self.samples += weight.cpu().item()
         self.cumsum += value.cpu().item()
 
-    def report(self):
+    def report(self, full_stats=False):
+        if full_stats:
+            return self.cumsum, self.samples
         if self.samples == 0:
             return 0
         return self.cumsum / self.samples
@@ -60,7 +62,7 @@ class AccumulatedMetric(Metric):
     def update_state(self, value):
         self.value = self._accumulate(self.value, to_tensor(value).cpu().item())
 
-    def report(self):
+    def report(self, full_stats=False):
         return self.value
 
 
@@ -77,13 +79,18 @@ class MetricsContext(MutableMapping):
     def log(self, name, *args, **kwargs):
         self[name](*args, **kwargs)
 
-    def collect(self, is_distributed=False):
-        vals = {k: val() for k, val in self.metrics.items()}
+    def collect(self, is_distributed=False, full_stats=False):
+        vals = {k: val(full_stats=full_stats) for k, val in self.metrics.items()}
         distributed_vals = []
         distributed_keys = []
+        distributed_lens = []
         for name, m in self.metrics.items():
             if m.is_distributed:
-                distributed_vals.append(vals[name])
+                if isinstance(vals[name], tuple):
+                    distributed_vals.extend(vals[name])
+                    distributed_lens.append(len(vals[name]))
+                else:
+                    distributed_lens.append(1)
                 distributed_keys.append(name)
             m.reset_states()
         if is_distributed:
@@ -91,8 +98,13 @@ class MetricsContext(MutableMapping):
             torch.distributed.all_reduce(values)
             values /= torch.distributed.get_world_size()
             values = list(values.cpu())
-            for k, val in zip(distributed_keys, values):
-                vals[k] = val
+            offset = 0
+            for k, clen in zip(distributed_keys, distributed_lens):
+                if clen == 1:
+                    vals[k] = values[offset]
+                else:
+                    vals[k] = tuple(values[offset:offset + clen])
+                offset += clen
         return vals
 
     def __len__(self):

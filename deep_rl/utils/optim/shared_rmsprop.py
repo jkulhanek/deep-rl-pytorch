@@ -40,7 +40,6 @@ class SharedRMSprop(Optimizer):
         defaults = dict(lr=lr, momentum=momentum, alpha=alpha, eps=eps, centered=centered, weight_decay=weight_decay)
         super().__init__(params, defaults)
 
-
         # State initialization
         for group in self.param_groups:
             for p in group['params']:
@@ -88,7 +87,7 @@ class SharedRMSprop(Optimizer):
                 grad = p.grad.data
                 if grad.is_sparse:
                     raise RuntimeError('RMSprop does not support sparse gradients')
-                
+
                 state = self.state[p]
 
                 square_avg = state['square_avg']
@@ -99,7 +98,7 @@ class SharedRMSprop(Optimizer):
                 if group['weight_decay'] != 0:
                     grad = grad.add(group['weight_decay'], p.data)
 
-                square_avg.mul_(alpha).addcmul_(1 - alpha, grad, grad)
+                square_avg.mul_(alpha).addcmul_(grad, grad, value=1 - alpha)
 
                 if group['centered']:
                     grad_avg = state['grad_avg']
@@ -113,6 +112,7 @@ class SharedRMSprop(Optimizer):
                     buf.mul_(group['momentum']).addcdiv_(grad, avg)
                     p.data.add_(-group['lr'], buf)
                 else:
-                    p.data.addcdiv_(-group['lr'], grad, avg)
+                    p.data.addcdiv_(grad, avg, value=-group['lr'])
 
         return loss
+
