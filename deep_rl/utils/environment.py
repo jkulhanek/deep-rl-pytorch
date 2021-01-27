@@ -43,22 +43,17 @@ class TransposeWrapper(gym.ObservationWrapper):
         return self.transpose_observation(ob, self.env.observation_space)
 
 
-class TorchWrapper(gym.vector.VectorEnvWrapper):
+class TorchWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
 
-    def step_async(self, actions):
-        return self.env.step_async(actions.detach().cpu().numpy())
-
-    def step_wait(self):
-        obs, rew, done, *info = self.env.step_wait()
+    def step(self, actions):
+        obs, *info = self.env.step(actions.detach().cpu().numpy())
         obs = self.from_numpy(obs)
-        rew = torch.from_numpy(rew).float()
-        done = torch.from_numpy(done)
-        return obs, rew, done, *info
+        return obs, *info
 
-    def reset_wait(self):
-        obs = self.env.reset_wait()
+    def reset(self):
+        obs = self.env.reset()
         obs = self.from_numpy(obs)
         return obs
 
@@ -72,6 +67,26 @@ class TorchWrapper(gym.vector.VectorEnvWrapper):
             return list(map(TorchWrapper.from_numpy, obj))
         if isinstance(obj, dict):
             return {k: TorchWrapper.from_numpy(v) for k, v in obj.items()}
+
+
+class VectorTorchWrapper(gym.vector.VectorEnvWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def step_async(self, actions):
+        return self.env.step_async(actions.detach().cpu().numpy())
+
+    def step_wait(self):
+        obs, rew, done, *info = self.env.step_wait()
+        obs = TorchWrapper.from_numpy(obs)
+        rew = torch.from_numpy(rew).float()
+        done = torch.from_numpy(done)
+        return obs, rew, done, *info
+
+    def reset_wait(self):
+        obs = self.env.reset_wait()
+        obs = TorchWrapper.from_numpy(obs)
+        return obs
 
 
 class RewardCollector(gym.Wrapper):

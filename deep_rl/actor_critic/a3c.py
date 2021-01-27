@@ -9,7 +9,7 @@ import tqdm
 
 from deep_rl.utils.optim.shared_rmsprop import SharedRMSprop
 from deep_rl.utils.trainer import Trainer, ScheduledMixin
-from deep_rl.utils.environment import with_collect_reward_info, TorchWrapper
+from deep_rl.utils.environment import with_collect_reward_info, VectorTorchWrapper
 from deep_rl.utils import to_device
 from deep_rl.utils.tensor import get_batch_size
 from deep_rl import metrics
@@ -81,7 +81,7 @@ class A3C(PAAC):
             self.model = self.model.share_memory()
         if stage == 'fit' and self._is_worker:
             self.model = self.model_fn().to(self.current_device)
-            self.env = TorchWrapper(gym.vector.SyncVectorEnv([partial(self.env_fn, self.global_rank)]))
+            self.env = VectorTorchWrapper(gym.vector.SyncVectorEnv([partial(self.env_fn, self.global_rank)]))
             self._tstart = time.time()
             if hasattr(self.model, 'initial_states'):
                 self._get_initial_states = lambda x: to_device(self.model.initial_states(x), self.current_device)

@@ -50,6 +50,7 @@ def find_save_dir(path):
 class ScheduledMixin:
     def __init__(self):
         object.__setattr__(self, 'schedules', dict())
+        object.__setattr__(self, '_scheduled_objects', dict())
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
@@ -57,6 +58,11 @@ class ScheduledMixin:
             self.schedules.pop(name)
         if isinstance(value, Schedule):
             self.schedules[name] = value
+        if isinstance(value, ScheduledMixin) and name in self._scheduled_objects:
+            self._scheduled_objects[name] = value
+        if name == 'global_t':
+            for s in self._scheduled_objects.values():
+                s.global_t = value
 
     def __getattribute__(self, name):
         value = super().__getattribute__(name)
@@ -72,6 +78,13 @@ class ScheduledMixin:
         super().__delattr__(name)
         if name in self.schedules:
             self.schedules.pop(name)
+        if name in self._scheduled_objects:
+            self._scheduled_objects.pop(name)
+
+    def raw_attribute(self, name):
+        if name in self.schedules:
+            return self.schedules[name]
+        return getattr(self, name)
 
 
 class Trainer(ScheduledMixin):
@@ -123,7 +136,9 @@ class Trainer(ScheduledMixin):
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = self.learning_rate
 
-            num_steps = self.training_step(batch)
+            num_steps, output = self.training_step(batch)
+            if hasattr(self, 'on_training_step_end'):
+                self.on_training_step_end(batch, output)
             self.global_t += num_steps * self.world_size
             progress.update(num_steps * self.world_size)
             postfix = 'return: {return:.2f}'.format(**self.metrics)
@@ -255,7 +270,7 @@ class Trainer(ScheduledMixin):
         for k, v in self.__dict__.items():
             if k.startswith('_'):
                 continue
-            if k in ['schedules', 'metrics', 'model_fn', 'env_fn']:
+            if k in ['schedules', 'metrics', 'model_fn', 'env_fn', '_scheduled_objects']:
                 continue
             if k in self.schedules:
                 v = self.schedules[k]

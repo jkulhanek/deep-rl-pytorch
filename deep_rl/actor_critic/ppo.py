@@ -187,4 +187,4 @@ class PPO(PAAC):
                 self.optimizer.step()
 
         # NOTE: the number of steps does not consider the number of grad updates
-        return self.num_steps
+        return self.num_steps, None

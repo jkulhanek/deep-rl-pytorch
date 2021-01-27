@@ -5,7 +5,7 @@ from gym.vector import AsyncVectorEnv
 from functools import partial
 from dataclasses import dataclass
 
-from deep_rl.utils.environment import with_collect_reward_info, TorchWrapper
+from deep_rl.utils.environment import with_collect_reward_info, VectorTorchWrapper
 from deep_rl.utils import to_device, detach_all, Trainer
 from deep_rl.utils.tensor import expand_time_dimension, stack_observations
 
@@ -109,7 +109,7 @@ class PAAC(Trainer):
             assert self.num_agents % self.world_size == 0, 'Number of agents has to be divisible by the world size'
             global_rank = self.global_rank
             agents_per_process = self.num_agents // self.world_size
-            self.env = TorchWrapper(AsyncVectorEnv([partial(self.env_fn, rank=i) for i in range(global_rank, global_rank + agents_per_process)]))
+            self.env = VectorTorchWrapper(AsyncVectorEnv([partial(self.env_fn, rank=i) for i in range(global_rank, global_rank + agents_per_process)]))
             if hasattr(self.model, 'initial_states'):
                 self._get_initial_states = lambda x=agents_per_process: to_device(self.model.initial_states(x), self.current_device)
             else:
@@ -203,4 +203,4 @@ class PAAC(Trainer):
             grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
             self.log('grad_norm', grad_norm)
         self.optimizer.step()
-        return self.num_steps
+        return self.num_steps, None

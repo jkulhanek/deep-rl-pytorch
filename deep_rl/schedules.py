@@ -70,19 +70,22 @@ class MultistepSchedule(Schedule):
 
         return ConstantSchedule(schedule)
 
-    def __init__(self, initial_value, steps, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.initial_value = self._wrap_schedule(initial_value)
+    def __init__(self, *steps, total_iterations=None, **kwargs):
+        super().__init__(**kwargs)
+        assert len(steps) > 0
         self.steps = [(i, self._wrap_schedule(x)) for i, x in steps]
+        self._total_iterations = total_iterations
 
     def __call__(self):
-        schedule, _ = self._get_current_schedule
+        schedule, _ = self._get_current_schedule()
         return schedule()
 
     def _get_current_schedule(self):
-        val = self.initial_value
+        val = self.steps[0][1]
         time = 0
         for i, value in self.steps:
+            if i <= 1.0:
+                i = int(i * self.total_iterations)
             if self.time >= i:
                 val = value
                 time = i
@@ -92,3 +95,15 @@ class MultistepSchedule(Schedule):
         super().step(time)
         current_schedule, start_time = self._get_current_schedule()
         current_schedule.step(self.time - start_time)
+
+    @property
+    def total_iterations(self):
+        return self._total_iterations
+
+    @total_iterations.setter
+    def total_iterations(self, total_iterations):
+        self._total_iterations = total_iterations
+        starts = [int(i * self.total_iterations) if i <= 1.0 else i for i, _ in self.steps]
+        starts.append(self.total_iterations)
+        for s, e, step in zip(starts, starts[1:], self.steps):
+            step.total_iterations = e - s
