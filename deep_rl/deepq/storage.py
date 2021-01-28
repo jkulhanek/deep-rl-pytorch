@@ -93,9 +93,9 @@ class MinSegmentTree(SegmentTree):
 class ReplayBatch:
     observations: Any
     actions: torch.Tensor
-    rewards: torch.Tensor
-    dones: torch.Tensor
-    next_observations: Any
+    returns: torch.Tensor
+    pcontinues: torch.Tensor
+    baseline_observations: Any
     weights: torch.Tensor = None
     idxes: torch.Tensor = None
 
@@ -104,27 +104,48 @@ class ReplayBatch:
 
 
 class ReplayBuffer:
-    def __init__(self, size, seed=42):
+    def __init__(self, size, gamma: float = 1.0, n_step_returns: int = 1, seed=42):
         self.rng = Random(seed)
+        self.n_step_returns = n_step_returns
+        self.gamma = gamma
         self._storage = []
-        self._maxsize = size
+        self._maxsize = size + n_step_returns
         self._next_idx = 0
 
     def __len__(self):
-        return len(self._storage)
+        return max(0, len(self._storage) - self.n_step_returns)
+
+    @property
+    def maxsize(self):
+        return self._maxsize - self.n_step_returns + 1
+
+    def _compute_returns(self, idxs):
+        _data = [list(zip(*[self._storage[s + i] for i in range(self.n_step_returns)])) for s in idxs]
+        _data = [(x[2:]) for x in _data]
+        rewards, dones = tuple(zip(*_data))
+        rewards = torch.tensor(rewards, dtype=torch.float32)
+        terminals = torch.tensor(dones, dtype=torch.float32)
+        returns = torch.zeros_like(rewards[:, 0].T)
+        pcontinues = torch.ones_like(rewards[:, 0].T)
+        for i in reversed(range(self.n_step_returns)):
+            returns = rewards[:, i].T + self.gamma * (1 - terminals[:, i].T) * returns
+            pcontinues = pcontinues * (1 - terminals[:, i].T)
+
+        pcontinues *= self.gamma ** self.n_step_returns
+        return returns, pcontinues
 
     def map_batch(self, idxes):
         batch = list(map(lambda x: self._storage[x], idxes))
-        state, action, reward, done, nstate = tuple(zip(*batch))
-        state = stack_observations(from_numpy(state), axis=0)
-        nstate = stack_observations(from_numpy(nstate), axis=0)
+        state, action, *_ = tuple(zip(*batch))
+        state = stack_observations(state, axis=0)
+        baseline_indexes = torch.tensor(idxes) + self.n_step_returns
+        baseline_states = stack_observations([self._storage[x][0] for x in baseline_indexes], axis=0)
         action = torch.tensor(action, dtype=torch.int64)
-        reward = torch.tensor(reward, dtype=torch.float32)
-        done = torch.tensor(done)
-        return ReplayBatch(state, action, reward, done, nstate)
+        returns, pcontinues = self._compute_returns(idxes)
+        return ReplayBatch(state, action, returns, pcontinues, baseline_states)
 
-    def add(self, obs, action, reward, done, nobs):
-        data = (obs, action, reward, done, nobs)
+    def add(self, state, action, reward, done):
+        data = (state, action, reward, done)
         if self._next_idx >= len(self._storage):
             self._storage.append(data)
         else:
@@ -132,13 +153,13 @@ class ReplayBuffer:
         self._next_idx = (self._next_idx + 1) % self._maxsize
 
     def sample(self, batch_size) -> ReplayBatch:
-        idxes = [self.rng.randint(0, len(self._storage) - 1) for _ in range(batch_size)]
+        idxes = [self.rng.randrange(0, len(self._storage) - self.n_step_returns) for _ in range(batch_size)]
         return self.map_batch(idxes)
 
 
 class PrioritizedReplayBuffer(ReplayBuffer):
-    def __init__(self, size, alpha=0.5, seed=42):
-        super().__init__(size, seed=seed)
+    def __init__(self, size, alpha=0.5, **kwargs):
+        super().__init__(size, **kwargs)
         assert alpha >= 0
         self._alpha = alpha
 
@@ -158,18 +179,20 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
     def _sample_proportional(self, batch_size):
         res = []
-        p_total = self._it_sum.sum(0, len(self._storage) - 1)
+        p_total = self._it_sum.sum(0, len(self._storage) - self.n_step_returns)
         every_range_len = p_total / batch_size
         for i in range(batch_size):
-            mass = self.rng.random() * every_range_len + i * every_range_len
-            idx = self._it_sum.find_prefixsum_idx(mass)
+            valid = False
+            while not valid:
+                mass = self.rng.random() * every_range_len + i * every_range_len
+                idx = self._it_sum.find_prefixsum_idx(mass)
+                valid = (self._next_idx - idx) % self._maxsize >= self.n_step_returns
             res.append(idx)
         return res
 
     def sample(self, batch_size, beta) -> ReplayBatch:
         assert beta > 0
         idxes = self._sample_proportional(batch_size)
-
         weights = []
         p_min = self._it_min.min() / self._it_sum.sum()
         max_weight = (p_min * len(self._storage)) ** (-beta)
@@ -180,6 +203,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             weights.append(weight / max_weight)
         weights = torch.tensor(weights, dtype=torch.float32)
         encoded_sample = self.map_batch(idxes)
+        idxes = torch.tensor(idxes, dtype=torch.int64)
         encoded_sample = dataclasses.replace(encoded_sample, weights=weights, idxes=idxes)
         return encoded_sample
 
@@ -190,5 +214,4 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             assert 0 <= idx < len(self._storage)
             self._it_sum[idx] = priority ** self._alpha
             self._it_min[idx] = priority ** self._alpha
-
             self._max_priority = max(self._max_priority, priority)

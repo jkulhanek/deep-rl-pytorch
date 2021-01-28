@@ -6,10 +6,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from deep_rl import register_trainer
 from deep_rl.actor_critic import A2C as Trainer
-from deep_rl.common.env import RewardCollector
-from deep_rl.model import TimeDistributed, MaskedRNN
+from deep_rl.utils.environment import RewardCollector
+from deep_rl.utils.model import TimeDistributed, MaskedRNN
 
 
 class Model(nn.Module):
@@ -73,7 +72,6 @@ gym.register(
 )
 
 
-@register_trainer(max_time_steps=10e6, validation_period=None,  episode_log_interval=10, save=False)
 class SomeTrainer(Trainer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

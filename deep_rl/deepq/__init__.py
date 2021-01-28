@@ -1,1 +1,1 @@
-from .dqn import DeepQTrainer, DeepQAgent
+from .dqn import DQN

@@ -120,7 +120,6 @@ class PPO(PAAC):
                  ppo_epochs: int = 4,
                  gae_lambda: float = 0.95,
                  num_minibatches: int = 4,
-
                  **kwargs):
         super().__init__(*args,
                          num_agents=num_agents,

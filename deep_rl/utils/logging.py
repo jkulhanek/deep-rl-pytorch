@@ -1,5 +1,6 @@
 from abc import abstractmethod, ABC
 import os
+import sys
 import logging
 from typing import Optional, Union, Dict, Any
 from argparse import Namespace
@@ -471,3 +472,51 @@ class CsvLogger(LoggerBase):
             f.flush()
         self._was_initialized = True
         self._metrics = defaultdict(lambda: ([], []))
+
+
+def setup_logging(level=logging.INFO):
+    from tqdm import tqdm
+
+    def is_console_handler(handler):
+        return isinstance(handler, logging.StreamHandler) and handler.stream in {sys.stdout, sys.stderr}
+
+    class TqdmLoggingHandler(logging.StreamHandler):
+        def emit(self, record):
+            try:
+                msg = self.format(record)
+                tqdm.write(msg)
+                self.flush()
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except:  # noqa pylint: disable=bare-except
+                self.handleError(record)
+
+    logging.basicConfig(stream=sys.stdout, level=level)
+    handler = TqdmLoggingHandler(sys.stdout)
+    try:
+        import colorlog
+        formatter = colorlog.LevelFormatter(fmt={
+            'DEBUG': '%(log_color)sdebug: %(message)s (%(module)s:%(lineno)d)%(reset)s',
+            'INFO': '%(log_color)sinfo%(reset)s: %(message)s',
+            'WARNING': '%(log_color)swarning%(reset)s: %(message)s (%(module)s:%(lineno)d)',
+            'ERROR': '%(log_color)serror%(reset)s: %(message)s (%(module)s:%(lineno)d)',
+            'CRITICAL': '%(log_color)scritical: %(message)s (%(module)s:%(lineno)d)%(reset)s',
+        }, log_colors={
+            'DEBUG': 'white',
+            'INFO': 'bold_green',
+            'WARNING': 'bold_yellow',
+            'ERROR': 'bold_red',
+            'CRITICAL': 'bold_red',
+        })
+        handler.setFormatter(formatter)
+    except(ModuleNotFoundError):
+        # We do not require colorlog to be present
+        pass
+    logging._acquireLock()
+    orig_handlers = logging.root.handlers
+    try:
+        logging.root.handlers = [x for x in orig_handlers if not is_console_handler(x)] + [handler]
+    except Exception:
+        logging.root.handlers = orig_handlers
+    finally:
+        logging._releaseLock()

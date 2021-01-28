@@ -94,8 +94,11 @@ class PAAC(Trainer):
                  gamma: float = 0.99,
                  value_coefficient: float = 1.0,
                  entropy_coefficient: float = 0.01,
+                 log_interval: int = 100,
+                 save_interval: int = 5000,
                  max_grad_norm: float = 0.0, **kwargs):
-        super().__init__(model_fn, learning_rate=learning_rate, **kwargs)
+        super().__init__(model_fn, learning_rate=learning_rate, log_interval=log_interval,
+                         save_interval=save_interval, **kwargs)
         self.num_agents = num_agents
         self.num_steps = num_steps
         self.max_grad_norm = max_grad_norm
@@ -106,15 +109,18 @@ class PAAC(Trainer):
 
     def setup(self, stage):
         if stage == 'fit':
-            assert self.num_agents % self.world_size == 0, 'Number of agents has to be divisible by the world size'
-            global_rank = self.global_rank
             agents_per_process = self.num_agents // self.world_size
-            self.env = VectorTorchWrapper(AsyncVectorEnv([partial(self.env_fn, rank=i) for i in range(global_rank, global_rank + agents_per_process)]))
-            if hasattr(self.model, 'initial_states'):
-                self._get_initial_states = lambda x=agents_per_process: to_device(self.model.initial_states(x), self.current_device)
-            else:
-                self._get_initial_states = lambda x: None
-            self.rollout_storage = self.RolloutStorage(agents_per_process, self.env.reset(), self._get_initial_states(agents_per_process))
+            assert self.num_agents % self.world_size == 0, 'Number of agents has to be divisible by the world size'
+        elif stage == 'evaluate':
+            agents_per_process = 1
+
+        global_rank = self.global_rank
+        self.env = VectorTorchWrapper(AsyncVectorEnv([partial(self.env_fn, rank=i) for i in range(global_rank, global_rank + agents_per_process)]))
+        if hasattr(self.model, 'initial_states'):
+            self._get_initial_states = lambda x=agents_per_process: to_device(self.model.initial_states(x), self.current_device)
+        else:
+            self._get_initial_states = lambda x: None
+        self.rollout_storage = self.RolloutStorage(agents_per_process, self.env.reset(), self._get_initial_states(agents_per_process))
         super().setup(stage)
 
     def compute_loss(self, batch: RolloutBatch) -> Tuple[torch.Tensor, Dict]:
@@ -156,8 +162,9 @@ class PAAC(Trainer):
     def collect_experience(self):
         episode_lengths = []
         episode_returns = []
-        for _ in range(self.num_steps):
-            actions, values, action_log_prob, states = self.step_single(to_device(self.rollout_storage.observations, self.current_device), self.rollout_storage.masks.to(self.current_device), self.rollout_storage.states)
+        for i in range(self.num_steps):
+            actions, values, action_log_prob, states = self.step_single(to_device(self.rollout_storage.observations, self.current_device),
+                                                                        self.rollout_storage.masks.to(self.current_device), self.rollout_storage.states)
             actions = actions.cpu()
             values = values.cpu()
             action_log_prob = action_log_prob.cpu()
@@ -174,7 +181,7 @@ class PAAC(Trainer):
             self.store_experience(observations, actions, rewards, terminals, values, action_log_prob, states)
 
         # Prepare next batch starting point
-        return torch.tensor(episode_lengths, dtype=torch.int32), torch.tensor(episode_returns, dtype=torch.float32)
+        return (i + 1) * actions.shape[0], torch.tensor(episode_lengths, dtype=torch.int32), torch.tensor(episode_returns, dtype=torch.float32)
 
     def store_experience(self, *args):
         self.rollout_storage.insert(*args)
@@ -204,3 +211,13 @@ class PAAC(Trainer):
             self.log('grad_norm', grad_norm)
         self.optimizer.step()
         return self.num_steps, None
+
+    def fit(self, *args, **kwargs):
+        result = super().fit(*args, **kwargs)
+        self.env.close()
+        return result
+
+    def evaluate(self, *args, **kwargs):
+        result = super().evaluate(*args, **kwargs)
+        self.env.close()
+        return result

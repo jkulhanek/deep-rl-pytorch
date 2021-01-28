@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from functools import partial
 import dataclasses
@@ -96,6 +97,22 @@ def tensor_map(fn, value):
         return {k: _map(v) for k, v in value.items()}
     if dataclasses.is_dataclass(value):
         return dataclasses.replace(value, **tensor_map(fn, value.__dict__))
+    raise ValueError(f'Value of type {type(value)} is not supported')
+
+
+def from_numpy(value):
+    if value is None:
+        return None
+    if isinstance(value, np.ndarray):
+        return torch.from_numpy(value)
+    if isinstance(value, list):
+        return list(map(from_numpy, value))
+    if isinstance(value, tuple):
+        return tuple(map(from_numpy, value))
+    if isinstance(value, dict):
+        return {k: from_numpy(v) for k, v in value.items()}
+    if dataclasses.is_dataclass(value):
+        return dataclasses.replace(value, **from_numpy(value.__dict__))
     raise ValueError(f'Value of type {type(value)} is not supported')
 
 

@@ -81,18 +81,20 @@ class A3C(PAAC):
             self.model = self.model.share_memory()
         if stage == 'fit' and self._is_worker:
             self.model = self.model_fn().to(self.current_device)
-            self.env = VectorTorchWrapper(gym.vector.SyncVectorEnv([partial(self.env_fn, self.global_rank)]))
             self._tstart = time.time()
-            if hasattr(self.model, 'initial_states'):
-                self._get_initial_states = lambda x: to_device(self.model.initial_states(x), self.current_device)
-            else:
-                self._get_initial_states = lambda x: None
-            self.rollout_storage = self.RolloutStorage(1, self.env.reset(), self._get_initial_states(1))
             self.metrics = metrics.MetricsContext(**{
                 'return': metrics.Mean(),
                 'updates': metrics.AccumulatedMetric(lambda x, y: x + y),
                 'fps': metrics.LastValue(),
                 'episodes': metrics.Mean(is_distributed=False)})
+
+        if stage == 'fit' and self._is_worker or stage == 'evaluate':
+            self.env = VectorTorchWrapper(gym.vector.SyncVectorEnv([partial(self.env_fn, self.global_rank)]))
+            if hasattr(self.model, 'initial_states'):
+                self._get_initial_states = lambda x: to_device(self.model.initial_states(x), self.current_device)
+            else:
+                self._get_initial_states = lambda x: None
+            self.rollout_storage = self.RolloutStorage(1, self.env.reset(), self._get_initial_states(1))
 
     def configure_optimizers(self, model):
         return SharedRMSprop(self.model.parameters(), self.learning_rate, self.rms_alpha, self.rms_epsilon).share_memory()
@@ -148,7 +150,7 @@ class A3C(PAAC):
         self.setup('fit')
         self.num_agents = num_agents
         while True:
-            self.model.load_state_dict(self.shared_model.state_dict())
+            # self.model.load_state_dict(self.shared_model.state_dict())
             _, episode_lengths, returns = self.collect_experience()
             batch = self.sample_experience_batch()
 
@@ -173,6 +175,7 @@ class A3C(PAAC):
                 break
             if self.max_episodes is not None and self.global_episodes >= self.max_episodes:
                 break
+        self.env.close()
 
     @property
     def global_t(self):
@@ -204,7 +207,7 @@ class A3C(PAAC):
         self.model_fn = model_fn
 
         # Initialize globals
-        smp = mp.get_context('spawn')
+        smp = torch.multiprocessing.get_context('spawn')
         self.shared_queue = smp.SimpleQueue()
         self.shared_global_t = smp.Value('i', 0)
         state_dict = self._get_worker_state_dict()
@@ -223,17 +226,18 @@ class A3C(PAAC):
                         self.metrics[m](v)
                 self.shared_global_t.value += delta_t
                 progress.update(delta_t)
-                postfix = 'return: {return:.2f}'.format(**self.metrics)
-                if 'loss' in self.metrics:
-                    postfix += ', loss: {loss:.4f}'.format(**self.metrics)
-                progress.set_postfix_str(postfix)
 
                 if self.global_t - self._last_save_step >= self.save_interval:
                     self.save()
                     self._last_save_step = self.global_t
                 if self.global_t - self._last_log_step >= self.log_interval:
-                    self._collect_logs()
+                    metrics = self._collect_logs()
                     self._last_log_step = self.global_t
+                    self._last_log_step = self.global_t
+                    postfix = 'return: {return:.2f}'.format(**metrics)
+                    if 'loss' in metrics:
+                        postfix += ', loss: {loss:.4f}'.format(**metrics)
+                    progress.set_postfix_str(postfix)
         progress.close()
         self.save()
 

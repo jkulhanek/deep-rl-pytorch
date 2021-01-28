@@ -3,6 +3,7 @@ import gym.spaces
 import torch
 import numpy as np
 from functools import partial
+from .tensor import from_numpy
 
 
 class TransposeWrapper(gym.ObservationWrapper):
@@ -47,26 +48,15 @@ class TorchWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
 
-    def step(self, actions):
-        obs, *info = self.env.step(actions.detach().cpu().numpy())
-        obs = self.from_numpy(obs)
-        return obs, *info
+    def step(self, action):
+        obs, *info = self.env.step(action.item())
+        obs = from_numpy(obs)
+        return (obs,) + tuple(info)
 
     def reset(self):
         obs = self.env.reset()
-        obs = self.from_numpy(obs)
+        obs = from_numpy(obs)
         return obs
-
-    @staticmethod
-    def from_numpy(obj):
-        if isinstance(obj, np.ndarray):
-            return torch.from_numpy(obj)
-        if isinstance(obj, list):
-            return list(map(TorchWrapper.from_numpy, obj))
-        if isinstance(obj, tuple):
-            return list(map(TorchWrapper.from_numpy, obj))
-        if isinstance(obj, dict):
-            return {k: TorchWrapper.from_numpy(v) for k, v in obj.items()}
 
 
 class VectorTorchWrapper(gym.vector.VectorEnvWrapper):
@@ -77,15 +67,15 @@ class VectorTorchWrapper(gym.vector.VectorEnvWrapper):
         return self.env.step_async(actions.detach().cpu().numpy())
 
     def step_wait(self):
-        obs, rew, done, *info = self.env.step_wait()
-        obs = TorchWrapper.from_numpy(obs)
+        obs, rew, done, stats = self.env.step_wait()
+        obs = from_numpy(obs)
         rew = torch.from_numpy(rew).float()
         done = torch.from_numpy(done)
-        return obs, rew, done, *info
+        return obs, rew, done, stats
 
     def reset_wait(self):
         obs = self.env.reset_wait()
-        obs = TorchWrapper.from_numpy(obs)
+        obs = from_numpy(obs)
         return obs
 
 

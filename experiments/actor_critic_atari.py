@@ -7,6 +7,7 @@ from deep_rl.utils import logging
 from deep_rl import actor_critic
 from deep_rl.utils.model import TimeDistributed, Flatten
 from deep_rl.common.pytorch import forward_masked_rnn_transposed
+from deep_rl.utils.argparse import add_arguments
 import torch
 from torch import nn
 
@@ -79,9 +80,15 @@ ALGO_MAP = {k.lower(): getattr(actor_critic, k) for k in dir(actor_critic) if k[
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('--trainer', choices=sorted(ALGO_MAP.keys()), default='ppo')
     parser.add_argument('--env', default='BreakoutNoFrameskip-v4')
+    parser.add_argument('--num-eval-episodes', type=int, default=50)
+    args, _ = parser.parse_known_args()
+    trainer_class = ALGO_MAP[args.trainer]
+
+    parser, bind_arguments = add_arguments(parser, trainer_class, defaults=dict(max_time_steps=10000), loggers=[], project='deep-rl')
+    parser = argparse.ArgumentParser(parents=[parser], add_help=True)
     args = parser.parse_args()
 
     def env_fn(rank):
@@ -94,8 +101,10 @@ def main():
     else:
         model_fn = partial(LSTMModel, 1, 4)
 
-    trainer = ALGO_MAP[args.trainer](model_fn, env_fn, project='deep-rl', loggers=[])
+    trainer = trainer_class(model_fn, env_fn, **bind_arguments(args))
+
     trainer.fit()
+    return trainer.evaluate(max_episodes=args.num_eval_episodes)
 
 
 if __name__ == '__main__':

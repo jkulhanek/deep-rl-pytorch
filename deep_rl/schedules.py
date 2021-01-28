@@ -105,5 +105,5 @@ class MultistepSchedule(Schedule):
         self._total_iterations = total_iterations
         starts = [int(i * self.total_iterations) if i <= 1.0 else i for i, _ in self.steps]
         starts.append(self.total_iterations)
-        for s, e, step in zip(starts, starts[1:], self.steps):
+        for s, e, (_, step) in zip(starts, starts[1:], self.steps):
             step.total_iterations = e - s

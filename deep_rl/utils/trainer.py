@@ -1,3 +1,4 @@
+from typing import Optional
 import os
 import shutil
 import torch
@@ -95,11 +96,11 @@ class Trainer(ScheduledMixin):
                  loggers=None,
                  project: str = None,
                  name: str = None,
-                 max_time_steps: int = None,
-                 save_interval: int = 10000,
-                 log_interval: int = 1000,
-                 num_gpus: int = None,
-                 max_episodes: int = None):
+                 max_time_steps: Optional[int] = None,
+                 save_interval: int = 50000,
+                 log_interval: int = 5000,
+                 num_gpus: Optional[int] = None,
+                 max_episodes: Optional[int] = None):
         super().__init__()
         self.model_fn = model_fn
         self.model, self.optimizer = None, None
@@ -122,7 +123,7 @@ class Trainer(ScheduledMixin):
         self._setup('fit')
         progress = tqdm.tqdm(desc='training', total=self.max_time_steps)
         while True:
-            episode_lengths, returns = self.collect_experience()
+            _, episode_lengths, returns = self.collect_experience()
             self.metrics['return'](returns)
             self.metrics['episode_length'](episode_lengths)
 
@@ -141,10 +142,6 @@ class Trainer(ScheduledMixin):
                 self.on_training_step_end(batch, output)
             self.global_t += num_steps * self.world_size
             progress.update(num_steps * self.world_size)
-            postfix = 'return: {return:.2f}'.format(**self.metrics)
-            if 'loss' in self.metrics:
-                postfix += ', loss: {loss:.4f}'.format(**self.metrics)
-            progress.set_postfix_str(postfix)
 
             self.metrics['updates'](1)
             self.metrics['fps'](self.global_t / (time.time() - self._tstart))
@@ -157,11 +154,52 @@ class Trainer(ScheduledMixin):
                 self.save()
                 self._last_save_step = self.global_t
             if self.global_t - self._last_log_step >= self.log_interval:
-                self._collect_logs()
+                metrics = self._collect_logs()
                 self._last_log_step = self.global_t
+                postfix = 'return: {return:.2f}'.format(**metrics)
+                if 'loss' in metrics:
+                    postfix += ', loss: {loss:.4f}'.format(**metrics)
+                progress.set_postfix_str(postfix)
 
         self.save()
         progress.close()
+
+    def evaluate(self, max_time_steps=None, max_episodes=None):
+        assert max_time_steps is not None or max_episodes is not None
+        self._setup('evaluate')
+        progress = tqdm.tqdm(desc='evaluating', total=max_time_steps or max_episodes)
+        metrics = self._get_metrics_context()
+        local_frames = 0
+        local_t = 0
+        tstart = time.time()
+        max_t = max_time_steps or max_episodes
+        last_progress_step = 0
+        while True:
+            diff, episode_lengths, returns = self.collect_experience()
+            metrics['return'](returns)
+            metrics['episode_length'](episode_lengths)
+
+            # We multiply by the world size, since the reduction in distributed setting is mean
+            metrics['episodes'](len(returns) * self.world_size)
+            metrics['updates'](1)
+            metrics['fps'](local_frames / (time.time() - tstart))
+            local_frames += diff
+            if max_episodes is not None:
+                diff = len(returns)
+            progress.update(diff)
+            local_t += diff
+            if local_t >= max_t:
+                break
+
+            if local_frames - last_progress_step >= self.log_interval:
+                mval = {k: v() for k, v in metrics.items()}
+                last_progress_step = local_frames
+                postfix = 'return: {return:.2f}'.format(**mval)
+                if 'loss' in mval:
+                    postfix += ', loss: {loss:.4f}'.format(**mval)
+                progress.set_postfix_str(postfix)
+        progress.close()
+        return metrics.collect()
 
     @property
     def current_device(self):
@@ -188,6 +226,14 @@ class Trainer(ScheduledMixin):
     def log(self, name, value):
         self.metrics[name](value)
 
+    @staticmethod
+    def _get_metrics_context():
+        return metrics.MetricsContext(**{
+            'return': metrics.Mean(),
+            'updates': metrics.AccumulatedMetric(lambda x, y: x + y),
+            'fps': metrics.LastValue(),
+            'episodes': metrics.Mean(is_distributed=True)})
+
     def _setup(self, stage):
         # Setup schedules
         for schedule in self.schedules.values():
@@ -212,11 +258,7 @@ class Trainer(ScheduledMixin):
             if self.optimizer is None:
                 self.optimizer = self.configure_optimizers(self.model)
             self._tstart = time.time()
-            self.metrics = metrics.MetricsContext(**{
-                'return': metrics.Mean(),
-                'updates': metrics.AccumulatedMetric(lambda x, y: x + y),
-                'fps': metrics.LastValue(),
-                'episodes': metrics.Mean(is_distributed=True)})
+            self.metrics = self._get_metrics_context()
             self._last_save_step = 0
             self._last_log_step = 0
             self.save_dir = None
