@@ -22,13 +22,17 @@ class Rainbow(DQN):
                  distributional_vmax: float = 10.0,
                  prioritized_replay_alpha: float = 0.5,
                  prioritized_replay_beta: float = None,
+                 noisy_nets: bool = True,
                  use_doubling: bool = True,
                  epsilon: float = None, **kwargs):
         if prioritized_replay_beta is None:
-            self.prioritized_replay_beta = schedules.LinearSchedule(0.4, 1.0, None)
+            prioritized_replay_beta = schedules.LinearSchedule(0.4, 1.0, None)
         if epsilon is None:
-            epsilon = schedules.MultistepSchedule((0, schedules.LinearSchedule(1.0, 0.01, None)), (0.8, schedules.ConstantSchedule(0.01)))
-        super().__init__(model_fn,
+            if noisy_nets:
+                epsilon = 0.0
+            else:
+                epsilon = schedules.MultistepSchedule((0, schedules.LinearSchedule(1.0, 0.01, None)), (0.8, schedules.ConstantSchedule(0.01)))
+        super().__init__(model_fn, env_fn,
                          learning_rate=learning_rate,
                          prioritized_replay_alpha=prioritized_replay_alpha,
                          prioritized_replay_beta=prioritized_replay_beta,
@@ -54,7 +58,7 @@ class Rainbow(DQN):
         self.supports = self.supports.to(self.current_device)
 
     def collect_experience(self, *args, **kwargs):
-        if self.distributional:
+        if self.noisy_nets:
             self.model.reset_noise()
         return super().collect_experience(*args, **kwargs)
 
@@ -65,7 +69,7 @@ class Rainbow(DQN):
         return q.argmax(-1)
 
     def compute_loss(self, batch):
-        if self.distributional:
+        if self.noisy_nets:
             self.model_target.reset_noise()
         if not self.distributional:
             return super().compute_loss(batch)

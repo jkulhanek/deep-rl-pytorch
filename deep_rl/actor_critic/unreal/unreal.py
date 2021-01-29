@@ -3,7 +3,7 @@ import torch
 from typing import Any
 from dataclasses import dataclass
 
-from deep_rl.common.schedules import LinearSchedule
+from deep_rl.schedules import LinearSchedule
 from deep_rl.utils.tensor import to_device
 from deep_rl.utils.environment import with_wrapper
 from .utils import pixel_control_loss, value_loss, reward_prediction_loss
