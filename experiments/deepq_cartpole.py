@@ -5,9 +5,10 @@ import torch.nn.functional as F
 import numpy as np
 from deep_rl import deepq
 from deep_rl.utils.argparse import add_arguments
+from deep_rl.deepq.models import RainbowBasedModel
 
 
-class Model(nn.Module):
+class Model(RainbowBasedModel):
     def __init__(self):
         super().__init__()
 
@@ -16,9 +17,10 @@ class Model(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
                 m.bias.data.fill_(0)
 
+        self.n_actions = 2
         self.layer = nn.Linear(4, 256)
-        self.adventage = nn.Linear(256, 2)
-        self.value = nn.Linear(256, 1)
+        self.adventage = nn.Linear(256, self.n_actions * self.output_multiple)
+        self.value = nn.Linear(256, 1 * self.output_multiple)
         self.apply(init_weights)
 
     def forward(self, inputs):
@@ -26,8 +28,12 @@ class Model(nn.Module):
         features = F.relu(features)
         value = self.value(features)
         adventage = self.adventage(features)
-        features = adventage + value - adventage.mean()
-        return features
+        if self.distributional_atoms is not None:
+            adventage = adventage.view(*(adventage.shape[:-1] + (self.n_actions, self.distributional_atoms,)))
+            value = value.view(*(value.shape[:-1] + (1, self.distributional_atoms,)))
+            return adventage + value - adventage.mean(-2, keepdim=True)
+        else:
+            return adventage + value - adventage.mean(-1, keepdim=True)
 
 
 ALGO_MAP = {k.lower(): getattr(deepq, k) for k in dir(deepq) if k[0].isupper()}

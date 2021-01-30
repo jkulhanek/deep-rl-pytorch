@@ -43,6 +43,7 @@ class Rainbow(DQN):
                          preload_steps=preload_steps,
                          batch_size=batch_size,
                          use_doubling=use_doubling, **kwargs)
+        self.noisy_nets = noisy_nets
         self.distributional = distributional
         self.distributional_atoms = distributional_atoms
         self.distributional_vmin = distributional_vmin
@@ -77,8 +78,8 @@ class Rainbow(DQN):
         # Uses the C51 algorithm
         # Computes the distribution estimates with bootstrapping
         with torch.no_grad():
-            target_probs = F.softmax(self.model_target(batch.next_observations), -1)
-            q_next_online_net = F.softmax(self.model(batch.next_observations), -1) @ self.supports
+            target_probs = F.softmax(self.model_target(batch.baseline_observations), -1)
+            q_next_online_net = F.softmax(self.model(batch.baseline_observations), -1) @ self.supports
             greedy_actions = torch.argmax(q_next_online_net, dim=-1, keepdim=False)
             d_probs = target_probs[range(target_probs.shape[0]), greedy_actions, :]
             d_values = batch.returns.view(-1, 1) + batch.pcontinues.view(-1, 1) * self.gamma ** self.n_step_returns * self.supports
@@ -108,4 +109,4 @@ class Rainbow(DQN):
         if batch.weights is not None:
             loss = loss * batch.weights
         loss = loss.mean()
-        return loss.mean(), kldiv.detach()
+        return loss.mean(), kldiv.detach(), dict()
